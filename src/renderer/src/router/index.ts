@@ -27,6 +27,13 @@ const router = createRouter({
       meta: { title: '待办' }
     },
     {
+      // 可选 toolId 参数：深链直达某工具（/toolbox/json-formatter）
+      path: '/toolbox/:toolId?',
+      name: 'toolbox',
+      component: () => import('../views/ToolboxView.vue'),
+      meta: { title: '工具箱' }
+    },
+    {
       path: '/settings',
       name: 'settings',
       component: () => import('../views/SettingsView.vue'),

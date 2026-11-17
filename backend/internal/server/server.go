@@ -12,7 +12,7 @@ import (
 const headerToken = "X-API-Token"
 
 // New 创建 Gin 引擎。token 非空时所有 /api 接口都要求携带 X-API-Token。
-func New(folderHandler *api.FolderHandler, noteHandler *api.NoteHandler, versionHandler *api.VersionHandler, adminHandler *api.AdminHandler, todoHandler *api.TodoHandler, token string) http.Handler {
+func New(folderHandler *api.FolderHandler, noteHandler *api.NoteHandler, versionHandler *api.VersionHandler, adminHandler *api.AdminHandler, todoHandler *api.TodoHandler, toolsHandler *api.ToolsHandler, token string) http.Handler {
 	r := gin.New()
 	r.Use(gin.Recovery(), gin.Logger(), corsMiddleware())
 	if token != "" {
@@ -65,6 +65,9 @@ func New(folderHandler *api.FolderHandler, noteHandler *api.NoteHandler, version
 		apiGroup.PUT("/todo-categories/:id", todoHandler.UpdateCategory)
 		apiGroup.DELETE("/todo-categories/:id", todoHandler.DeleteCategory)
 		apiGroup.GET("/todo-tags", todoHandler.ListTags)
+
+		// 工具箱：通用 HTTP 代理（简易 Postman 用，带 SSRF 防护）
+		apiGroup.POST("/tools/proxy", toolsHandler.Proxy)
 	}
 	return r
 }

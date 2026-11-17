@@ -1,0 +1,11 @@
+[
+  {
+    "id": "hello-tool",
+    "name": "Hello 工具示例",
+    "version": "0.1.0",
+    "description": "演示远程安装的示例工具（ctx.registerTool 契约）",
+    "category": "示例",
+    "downloadUrl": "https://gitee.com/yukai1998/my-dash/releases/download/tools-v0.1.0/hello-tool-0.1.0.zip",
+    "sha256": ""
+  }
+]

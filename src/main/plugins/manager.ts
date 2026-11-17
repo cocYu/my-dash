@@ -4,6 +4,7 @@
 // dev 额外扫描仓库 plugins-dev/ 目录，便于开发调试。
 import { app, ipcMain, protocol, shell } from 'electron'
 import AdmZip from 'adm-zip'
+import { createHash } from 'node:crypto'
 import fs from 'node:fs'
 import fsp from 'node:fs/promises'
 import path from 'node:path'
@@ -29,9 +30,29 @@ export interface PluginRecord {
   error?: string
 }
 
+interface InstalledEntry {
+  enabled: boolean
+  installedAt: string
+  /** 安装方式：zip=本地导入，remote=远程下载 */
+  source?: 'zip' | 'remote'
+  /** 最近一次升级时间 */
+  updatedAt?: string
+}
+
 interface InstalledState {
-  /** pluginId -> { enabled }（持久化的启停状态） */
-  [id: string]: { enabled: boolean; installedAt: string }
+  /** pluginId -> 持久化的启停/安装状态 */
+  [id: string]: InstalledEntry
+}
+
+/** 远程工具索引条目（tools-registry/registry.json 的形状） */
+export interface RemoteRegistryEntry {
+  id: string
+  name: string
+  version: string
+  description?: string
+  category?: string
+  downloadUrl: string
+  sha256?: string
 }
 
 const ID_PATTERN = /^[a-z0-9][a-z0-9-]{1,63}$/
@@ -186,7 +207,10 @@ function locateManifest(zip: AdmZip): { base: string; manifestText: string } {
   return { base, manifestText: target.getData().toString('utf-8') }
 }
 
-async function importZipBuffer(data: Buffer): Promise<PluginManifest> {
+async function importZipBuffer(
+  data: Buffer,
+  opts: { overwrite?: boolean; source?: 'zip' | 'remote' } = {}
+): Promise<PluginManifest> {
   const zip = new AdmZip(data)
   const { base, manifestText } = locateManifest(zip)
 
@@ -196,7 +220,9 @@ async function importZipBuffer(data: Buffer): Promise<PluginManifest> {
   if (!ID_PATTERN.test(roughId)) throw new Error(`非法的插件 id: "${roughId}"`)
 
   const target = path.join(userPluginsDir(), roughId)
-  if (fs.existsSync(target)) throw new Error(`插件 ${roughId} 已存在（先卸载或改名后再导入）`)
+  if (fs.existsSync(target) && !opts.overwrite) {
+    throw new Error(`插件 ${roughId} 已存在（先卸载或改名后再导入）`)
+  }
 
   const staging = path.join(userPluginsDir(), `.staging-${roughId}-${Date.now()}`)
   try {
@@ -219,8 +245,28 @@ async function importZipBuffer(data: Buffer): Promise<PluginManifest> {
     }
     const manifest = validateManifest(JSON.parse(manifestText), staging)
 
-    fs.renameSync(staging, target) // 校验通过，落位
-    installed[manifest.id] = { enabled: true, installedAt: new Date().toISOString() }
+    // 校验通过，落位；覆盖升级时旧目录先挪走、新目录 rename 原子换入，失败回滚
+    if (fs.existsSync(target)) {
+      const trash = `${target}.trash-${Date.now()}`
+      fs.renameSync(target, trash)
+      try {
+        fs.renameSync(staging, target)
+      } catch (err) {
+        fs.renameSync(trash, target)
+        throw err
+      }
+      fs.rmSync(trash, { recursive: true, force: true })
+    } else {
+      fs.renameSync(staging, target)
+    }
+    const now = new Date().toISOString()
+    const prev = installed[manifest.id]
+    installed[manifest.id] = {
+      enabled: prev?.enabled ?? true,
+      installedAt: prev?.installedAt ?? now,
+      source: opts.source ?? prev?.source ?? 'zip',
+      updatedAt: opts.overwrite ? now : prev?.updatedAt
+    }
     saveState()
     rescan()
     return manifest
@@ -228,6 +274,64 @@ async function importZipBuffer(data: Buffer): Promise<PluginManifest> {
     fs.rmSync(staging, { recursive: true, force: true }) // 失败清理
     throw err
   }
+}
+
+// ---------------- 远程安装 ----------------
+/** 仓库内置的 registry 索引地址（tools-registry/registry.json），可传参覆盖 */
+const DEFAULT_REGISTRY_URL = 'https://gitee.com/yukai1998/my-dash/raw/main/tools-registry/registry.json'
+
+/** 带超时与体积上限的下载（Electron 主进程 Node 22 全局 fetch） */
+async function fetchWithLimits(url: string, timeoutMs: number, maxBytes: number): Promise<Buffer> {
+  let res: Response
+  try {
+    res = await fetch(url, { signal: AbortSignal.timeout(timeoutMs) })
+  } catch (err) {
+    throw new Error(`下载失败: ${err instanceof Error ? err.message : String(err)}`)
+  }
+  if (!res.ok) throw new Error(`下载失败: HTTP ${res.status}`)
+  const ab = await res.arrayBuffer()
+  if (ab.byteLength > maxBytes) {
+    throw new Error(`下载内容超过 ${Math.round(maxBytes / 1024 / 1024)}MB 上限`)
+  }
+  return Buffer.from(ab)
+}
+
+/** 拉取远程工具索引（默认仓库内置地址，可传自定义 URL） */
+async function fetchRemoteRegistry(url?: string): Promise<RemoteRegistryEntry[]> {
+  const target = (url ?? '').trim() || DEFAULT_REGISTRY_URL
+  const buf = await fetchWithLimits(target, 8000, 1 << 20)
+  let data: unknown
+  try {
+    data = JSON.parse(buf.toString('utf-8'))
+  } catch {
+    throw new Error('registry 内容不是合法 JSON')
+  }
+  if (!Array.isArray(data)) throw new Error('registry 格式错误：应为数组')
+  return data.map((raw: Record<string, unknown>) => {
+    const id = String(raw.id ?? '')
+    const name = String(raw.name ?? '')
+    const version = String(raw.version ?? '')
+    const downloadUrl = String(raw.downloadUrl ?? '')
+    if (!ID_PATTERN.test(id)) throw new Error(`registry 条目 id 非法: "${id}"`)
+    if (!name || !version || !downloadUrl) throw new Error(`registry 条目 ${id} 缺少 name/version/downloadUrl`)
+    const entry: RemoteRegistryEntry = { id, name, version, downloadUrl }
+    if (typeof raw.description === 'string') entry.description = raw.description
+    if (typeof raw.category === 'string') entry.category = raw.category
+    if (typeof raw.sha256 === 'string' && /^[0-9a-fA-F]{64}$/.test(raw.sha256)) entry.sha256 = raw.sha256
+    return entry
+  })
+}
+
+/** 下载远程工具包（可选 sha256 校验）并覆盖安装 */
+async function installRemote(payload: { url: string; sha256?: string }): Promise<PluginManifest> {
+  const buf = await fetchWithLimits(payload.url, 30000, 20 << 20)
+  if (payload.sha256) {
+    const actual = createHash('sha256').update(buf).digest('hex')
+    if (actual.toLowerCase() !== payload.sha256.toLowerCase()) {
+      throw new Error(`SHA256 校验失败：期望 ${payload.sha256}，实际 ${actual}（包可能被篡改或索引过期）`)
+    }
+  }
+  return importZipBuffer(buf, { overwrite: true, source: 'remote' })
 }
 
 // ---------------- KV 存储 ----------------
@@ -325,6 +429,16 @@ export function registerPluginIpc(): void {
   ipcMain.handle('plugins:import', async (_e, data: ArrayBuffer) => {
     const manifest = await importZipBuffer(Buffer.from(data))
     return { id: manifest.id, name: manifest.name }
+  })
+
+  // 远程工具索引（默认仓库内置地址，可传自定义 URL）
+  ipcMain.handle('plugins:remote-list', (_e, url?: string) => fetchRemoteRegistry(url))
+
+  // 远程下载安装（可选 sha256 校验，覆盖升级）
+  ipcMain.handle('plugins:install-remote', async (_e, payload: { url: string; sha256?: string }) => {
+    if (typeof payload?.url !== 'string' || !payload.url) throw new Error('缺少下载地址')
+    const manifest = await installRemote(payload)
+    return { id: manifest.id, name: manifest.name, version: manifest.version }
   })
 
   ipcMain.handle('plugins:uninstall', (_e, id: string) => {

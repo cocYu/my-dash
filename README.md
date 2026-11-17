@@ -113,6 +113,7 @@ node scripts/e2e-check.mjs   # 先 MYDASH_DEBUG_PORT=9222 npm run dev 再执行
 |-----|------|
 | `ctx.registerPage({ path, title, icon?, component })` | 注册页面：路由自动挂 `/p/<插件id>` 前缀，侧边栏自动出现入口 |
 | `ctx.registerWidget({ id, title, component })` | 注册仪表盘小组件卡片 |
+| `ctx.registerTool({ id, name, icon?, category?, description?, component })` | 注册工具箱工具：与内置工具混排（见 `plugins-dev/hello-tool/`） |
 | `ctx.http.get/post(url, data?)` | 受权限白名单约束的业务 API 调用（如 `notes:read` → `GET /api/notes*`） |
 | `ctx.storage.get/set/remove/keys` | 插件命名空间 KV（主进程按 id 落 JSON，重启保留） |
 | `ctx.vue` | Vue 常用 API（h/ref/computed/defineComponent/onMounted…，勿裸 import 'vue'） |
@@ -141,6 +142,45 @@ node scripts/e2e-check.mjs   # 先 MYDASH_DEBUG_PORT=9222 npm run dev 再执行
 新增主题：在 `styles/main.css` 加一段 `html[data-theme='<id>'] { … }` token 集合，
 再在 `theme/index.ts` 的 `THEMES` 里登记（id/name/mode/预览色）即可，深色主题会自动挂
 Element Plus 的 `html.dark` 基底。插件页面经 Element Plus 变量自动继承主题。
+
+## 工具箱
+
+「工具箱」页：左侧搜索 + 分类工具列表，右侧工具工作区（`/toolbox/:toolId` 可深链直达）。
+
+- **内置 11 个工具**：JSON 美化（格式化/压缩/校验）、JSON 比较（键序规范化后 diff）、文本比较
+  （CodeMirror merge 双栏）、正则测试（实时高亮 + 分组提取）、Postman（经本机后端代理转发，带
+  SSRF 防护）、WebSocket 测试、时间戳转换、Cron 表达式（cron-parser）、URL/Base64 编解码、
+  哈希计算（MD5/SHA-1/SHA-256，文本与文件）、UUID 生成
+- **性能设计**：工具组件全部 `defineAsyncComponent` 懒加载（未打开零执行）；工作区 `keep-alive
+  :max=6` LRU 缓存（内存有界，回访秒开）；实时解析类 300ms 防抖；WebSocket 切走自动断开
+- **Postman 网络通道**：渲染层受 CORS 限制，任意域请求统一走 Go 后端 `POST /api/tools/proxy`
+  转发（默认 15s 超时、响应 10MB 上限、拒绝本机/内网目标防 SSRF）
+- **插件工具**：插件经 `ctx.registerTool({ id, name, icon?, category?, description?, component })`
+  注册工具，与内置工具混排展示（完整示例见 `plugins-dev/hello-tool/`）。插件可见的 Vue API 与
+  Element Plus 组件白名单已扩充（ElTabs/ElSelect/ElForm/ElDatePicker 等）
+
+### 远程安装工具
+
+「工具箱 → 获取工具」或「设置 → 插件 → 从 URL 安装」：
+
+- **registry 索引**（`tools-registry/registry.json`，默认指向仓库内置地址，可替换自建）：
+
+```json
+[
+  {
+    "id": "hello-tool",
+    "name": "Hello 工具示例",
+    "version": "0.1.0",
+    "description": "…",
+    "downloadUrl": "https://…/hello-tool-0.1.0.zip",
+    "sha256": "（可选，64 位十六进制；提供则安装时强校验）"
+  }
+]
+```
+
+- **安装流程**：下载 zip（≤20MB）→ sha256 校验（索引提供时）→ 原子覆盖落位（同 id 即升级，
+  保留启停状态）→ 重载插件 → 工具自动出现在工具箱
+- **安全边界**：沿用插件系统既有声明（主世界运行、权限为声明式约束），请仅安装可信来源的包
 
 ## 待办
 

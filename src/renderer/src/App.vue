@@ -16,7 +16,7 @@
         class="topmenu"
         mode="horizontal"
         router
-        :default-active="route.path"
+        :default-active="menuActive"
         :ellipsis="true"
       >
         <el-menu-item index="/dashboard">
@@ -30,6 +30,10 @@
         <el-menu-item index="/todos">
           <el-icon><Finished /></el-icon>
           <span>待办</span>
+        </el-menu-item>
+        <el-menu-item index="/toolbox">
+          <el-icon><Suitcase /></el-icon>
+          <span>工具箱</span>
         </el-menu-item>
         <!-- 插件注册的页面 -->
         <el-menu-item v-for="page in pluginRegistry.pages" :key="page.path" :index="page.path">
@@ -57,11 +61,15 @@
 </template>
 
 <script setup lang="ts">
+import { computed } from 'vue'
 import { useRoute } from 'vue-router'
-import { Box, Document, Finished, Odometer, Setting, SetUp } from '@element-plus/icons-vue'
+import { Box, Document, Finished, Odometer, Setting, SetUp, Suitcase } from '@element-plus/icons-vue'
 import { pluginRegistry } from './plugins/store'
 
 const route = useRoute()
+
+// /toolbox/:toolId 深链时菜单仍高亮「工具箱」主项
+const menuActive = computed(() => (route.path.startsWith('/toolbox') ? '/toolbox' : route.path))
 </script>
 
 <style>

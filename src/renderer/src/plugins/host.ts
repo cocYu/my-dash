@@ -7,39 +7,73 @@ import {
   defineComponent,
   h,
   nextTick,
+  onActivated,
+  onBeforeUnmount,
+  onDeactivated,
   onMounted,
   onUnmounted,
   reactive,
   ref,
   resolveComponent,
+  shallowRef,
   toRefs,
   watch,
+  watchEffect,
   type Component
 } from 'vue'
 import {
   ElAlert,
   ElButton,
   ElCard,
+  ElCheckbox,
+  ElCheckboxGroup,
+  ElCollapse,
+  ElCollapseItem,
+  ElDatePicker,
+  ElDivider,
+  ElDropdown,
+  ElDropdownItem,
+  ElDropdownMenu,
   ElEmpty,
+  ElForm,
+  ElFormItem,
   ElInput,
+  ElInputNumber,
   ElMessage,
-  ElStatistic,
+  ElProgress,
+  ElRadio,
+  ElRadioButton,
+  ElRadioGroup,
+  ElSelect,
+  ElOption,
+  ElSlider,
+  ElSwitch,
+  ElTabPane,
+  ElTabs,
   ElTable,
   ElTableColumn,
-  ElTag
+  ElTag,
+  ElTooltip,
+  ElStatistic
 } from 'element-plus'
 import router from '../router'
 import { request } from '../api/http'
 import { pluginRegistry, type RegisteredPage, type RegisteredWidget } from './store'
+import { clearPluginTools, toolboxRegistry } from '../toolbox/registry'
 
 /** 插件可见的 Vue 常用 API（避免插件裸 import 'vue'——打包后无裸模块可解析） */
 const vueApis = {
-  h, ref, reactive, computed, watch, toRefs, defineComponent, onMounted, onUnmounted, nextTick, resolveComponent
+  h, ref, reactive, shallowRef, computed, watch, watchEffect, toRefs, defineComponent,
+  onMounted, onUnmounted, onBeforeUnmount, onActivated, onDeactivated, nextTick, resolveComponent
 }
 
 /** 插件可见的 Element Plus 组件（渲染函数里直接作为标签对象使用） */
 const uiComponents = {
-  ElAlert, ElButton, ElCard, ElEmpty, ElInput, ElStatistic, ElTable, ElTableColumn, ElTag,
+  ElAlert, ElButton, ElCard, ElCheckbox, ElCheckboxGroup, ElCollapse, ElCollapseItem,
+  ElDatePicker, ElDivider, ElDropdown, ElDropdownItem, ElDropdownMenu, ElEmpty,
+  ElForm, ElFormItem, ElInput, ElInputNumber, ElRadio, ElRadioButton, ElRadioGroup,
+  ElSelect, ElOption, ElSlider, ElStatistic, ElSwitch, ElTabPane, ElTabs,
+  ElTable, ElTableColumn, ElTag, ElTooltip,
   message: ElMessage
 }
 
@@ -62,6 +96,15 @@ interface PluginContext {
   ui: typeof uiComponents
   registerPage(page: { path: string; title: string; icon?: Component; component: Component }): void
   registerWidget(widget: { id: string; title: string; component: Component }): void
+  /** 注册工具箱工具：id 自动加 <pluginId>: 前缀，与内置工具在工具箱页混排 */
+  registerTool(tool: {
+    id: string
+    name: string
+    icon?: Component
+    category?: string
+    description?: string
+    component: Component
+  }): void
   storage: {
     get<T = unknown>(key: string): Promise<T | null>
     set(key: string, value: unknown): Promise<boolean>
@@ -139,6 +182,21 @@ function createContext(meta: PluginMeta): PluginContext {
       }
       pluginRegistry.widgets.push(entry)
     },
+    registerTool(tool) {
+      const id = `${meta.id}:${tool.id}`
+      if (toolboxRegistry.tools.some((t) => t.id === id)) {
+        throw new Error(`工具重复注册: ${id}`)
+      }
+      toolboxRegistry.tools.push({
+        id,
+        name: tool.name,
+        icon: tool.icon,
+        category: tool.category ?? '其他',
+        description: tool.description,
+        component: tool.component,
+        fromPlugin: true
+      })
+    },
     storage: {
       get: <T,>(key: string) => window.api.plugins.kv(meta.id, 'get', key) as Promise<T | null>,
       set: (key, value) => window.api.plugins.kv(meta.id, 'set', key, value) as Promise<boolean>,
@@ -200,6 +258,7 @@ export async function reloadPlugins(): Promise<void> {
   pluginRegistry.pages = []
   pluginRegistry.widgets = []
   pluginRegistry.errors = []
+  clearPluginTools()
   bootId = Date.now().toString(36)
   await bootstrapPlugins()
 }

@@ -3,6 +3,7 @@
     <div class="panel-toolbar">
       <div>
         <el-button @click="pickZip">导入插件 (.zip)</el-button>
+        <el-button @click="installFromUrl">从 URL 安装…</el-button>
         <el-button @click="uninstallSelected">卸载</el-button>
         <el-button @click="openDir">打开插件目录</el-button>
       </div>
@@ -136,6 +137,28 @@ function uninstallSelected(): void {
     return
   }
   void uninstall(first)
+}
+
+/** 从 URL 安装/升级：下载 zip（可选校验 sha256）→ 原子落位 → 重载插件 */
+async function installFromUrl(): Promise<void> {
+  const { value } = await ElMessageBox.prompt(
+    '输入工具/插件 zip 包的下载地址（同 id 已安装时执行升级）',
+    '从 URL 安装',
+    { inputPlaceholder: 'https://…/my-tool-0.1.0.zip', inputValue: '', cancelButtonText: '取消', confirmButtonText: '下载安装' }
+  ).catch(() => ({ value: '' }))
+  const url = value.trim()
+  if (!url) return
+  const loadingMsg = ElMessage({ message: '正在下载并安装…', type: 'info', duration: 0 })
+  try {
+    const res = (await window.api.plugins.installRemote({ url })) as { id: string; name: string; version: string }
+    await reloadPlugins()
+    await fetchList()
+    ElMessage.success(`已安装 ${res.name} v${res.version}`)
+  } catch (err) {
+    ElMessage.error(`安装失败：${err instanceof Error ? err.message : String(err)}`)
+  } finally {
+    loadingMsg.close()
+  }
 }
 
 async function reload(): Promise<void> {
