@@ -52,6 +52,16 @@ md.use(texmath, {
   katexOptions: { output: 'html' }
 })
 
+// 顶层块级元素标注源码行号（data-line），供分屏视图滚动同步定位
+md.core.ruler.push('source_line', (state) => {
+  for (const token of state.tokens) {
+    // nesting 1 = 开标签（p/标题/列表/表格…），0 = 自闭合（代码块/分隔线）；只标顶层块
+    if (token.map && token.level === 0 && token.nesting >= 0) {
+      token.attrSet('data-line', String(token.map[0]))
+    }
+  }
+})
+
 export function renderMarkdown(source: string): string {
   return md.render(source ?? '')
 }
