@@ -34,7 +34,7 @@ const live = ref(true)
 const mergeHost = ref<HTMLElement | null>(null)
 let mv: MergeView | null = null
 
-const ro = [EditorState.readOnly.of(true), EditorView.editable.of(false)]
+const ro = [EditorState.readOnly.of(true), EditorView.editable.of(false), EditorView.lineWrapping]
 
 function render(): void {
   if (!mergeHost.value) return
@@ -86,6 +86,8 @@ onBeforeUnmount(() => mv?.destroy())
   display: flex;
   flex-direction: column;
   gap: 6px;
+  /* min-width: 0 防止长不可断行内容把 1fr 轨道撑宽挤扁邻列 */
+  min-width: 0;
 }
 
 .pane-title {

@@ -10,7 +10,7 @@
       <el-button size="small" @click="copyOutput" :disabled="!output">复制结果</el-button>
       <el-button size="small" @click="loadSample">示例</el-button>
       <el-button size="small" @click="clear">清空</el-button>
-      <el-tag v-if="valid === true" type="success" size="small" effect="plain">✓ 合法 JSON</el-tag>
+      <el-tag v-if="valid === true" type="success" size="small" effect="plain">✓ {{ formatLabel }}</el-tag>
       <el-tag v-else-if="valid === false" type="danger" size="small" effect="plain">✗ {{ errorMsg }}</el-tag>
       <el-tag v-else size="small" type="info" effect="plain" disable-transitions>待输入</el-tag>
       <span class="hint">输入实时校验（300ms 防抖）· 大于 5MB 建议拆分处理</span>
@@ -33,31 +33,42 @@ defineOptions({ name: 'tool-json-formatter' })
 import { ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import CodeEditor from '../../shared/CodeEditor.vue'
+import { parseJsonLenient, FORMAT_LABELS, type JsonInputFormat } from '../../shared/lenient-json'
 
 const input = ref('')
 const output = ref('')
 const valid = ref<boolean | null>(null)
 const errorMsg = ref('')
+const inputFormat = ref<JsonInputFormat>('json')
+const formatLabel = ref('')
 
-// 300ms 防抖：大文本 JSON.parse 也不至于每个按键都跑
+// 300ms 防抖：大文本解析也不至于每个按键都跑
 let timer: ReturnType<typeof setTimeout> | null = null
 watch(input, (v) => {
   if (timer) clearTimeout(timer)
   timer = setTimeout(() => validate(v), 300)
 })
 
+/** 最近一次校验通过的解析结果（格式化/压缩直接复用，避免大文本二次解析） */
+let lastParsed: { value: unknown; format: JsonInputFormat } | null = null
+
 function validate(text: string): boolean {
   if (!text.trim()) {
     valid.value = null
     output.value = ''
+    lastParsed = null
     return false
   }
   try {
-    JSON.parse(text)
+    const r = parseJsonLenient(text)
+    lastParsed = { value: r.value, format: r.format }
     valid.value = true
     errorMsg.value = ''
+    inputFormat.value = r.format
+    formatLabel.value = `合法（${FORMAT_LABELS[r.format]}）`
     return true
   } catch (err) {
+    lastParsed = null
     valid.value = false
     errorMsg.value = err instanceof Error ? err.message : String(err)
     return false
@@ -65,19 +76,19 @@ function validate(text: string): boolean {
 }
 
 function format(space: number): void {
-  if (!validate(input.value)) {
+  if (!validate(input.value) || !lastParsed) {
     if (input.value.trim()) ElMessage.error('JSON 不合法，无法格式化')
     return
   }
-  output.value = JSON.stringify(JSON.parse(input.value), null, space)
+  output.value = JSON.stringify(lastParsed.value, null, space)
 }
 
 function minify(): void {
-  if (!validate(input.value)) {
+  if (!validate(input.value) || !lastParsed) {
     if (input.value.trim()) ElMessage.error('JSON 不合法，无法压缩')
     return
   }
-  output.value = JSON.stringify(JSON.parse(input.value))
+  output.value = JSON.stringify(lastParsed.value)
 }
 
 async function copyOutput(): Promise<void> {
@@ -137,6 +148,8 @@ function clear(): void {
   flex-direction: column;
   gap: 6px;
   min-height: 0;
+  /* min-width: 0 防止长不可断行内容（如压缩 JSON）把 1fr 轨道撑宽挤扁邻列 */
+  min-width: 0;
 }
 
 .pane-title {

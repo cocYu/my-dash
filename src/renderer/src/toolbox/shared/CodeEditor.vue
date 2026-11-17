@@ -18,15 +18,17 @@ const props = withDefaults(
     readonly?: boolean
     placeholder?: string
     minHeight?: string
+    /** 超长行自动换行（默认开）；false 时横向滚动 */
+    wrap?: boolean
   }>(),
-  { language: 'text', readonly: false, placeholder: '', minHeight: '160px' }
+  { language: 'text', readonly: false, placeholder: '', minHeight: '160px', wrap: true }
 )
 const emit = defineEmits<{ 'update:modelValue': [value: string] }>()
 
 const host = ref<HTMLElement | null>(null)
 let view: EditorView | null = null
-/** 编辑器自身输入触发的变更不走 watch（避免光标重置） */
-let inner = false
+/** 父组件驱动的 dispatch 期间为 true：此时 updateListener 不回传（避免回环） */
+let applying = false
 
 function buildExtensions(): Extension[] {
   const ext = [
@@ -37,13 +39,13 @@ function buildExtensions(): Extension[] {
       '.cm-gutters': { backgroundColor: 'transparent' }
     }),
     EditorView.updateListener.of((u) => {
-      if (u.docChanged) {
-        inner = true
+      if (u.docChanged && !applying) {
         emit('update:modelValue', u.state.doc.toString())
       }
     })
   ]
   if (props.language === 'json') ext.push(json())
+  if (props.wrap) ext.push(EditorView.lineWrapping)
   if (props.readonly) ext.push(EditorState.readOnly.of(true), EditorView.editable.of(false))
   return ext
 }
@@ -58,12 +60,10 @@ onMounted(() => {
 watch(
   () => props.modelValue,
   (val) => {
-    if (inner) {
-      inner = false
-      return
-    }
     if (view && val !== view.state.doc.toString()) {
+      applying = true
       view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: val } })
+      applying = false
     }
   }
 )
@@ -90,6 +90,9 @@ onBeforeUnmount(() => view?.destroy())
   border: 1px solid var(--divider);
   border-radius: var(--radius-sm);
   overflow: hidden;
+  /* 作为 flex/grid 子项时不被长行内容撑宽（长行由 CM 横向滚动消化） */
+  min-width: 0;
+  max-width: 100%;
 }
 
 .tool-editor :deep(.cm-editor) {

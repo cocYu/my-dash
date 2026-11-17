@@ -7,7 +7,7 @@
         <div class="pane-title">
           JSON A
           <el-tag v-if="errA" type="danger" size="small" effect="plain">✗ {{ errA }}</el-tag>
-          <el-tag v-else-if="aText.trim()" type="success" size="small" effect="plain">✓</el-tag>
+          <el-tag v-else-if="aText.trim()" type="success" size="small" effect="plain">✓ {{ FORMAT_LABELS[fmtA] }}</el-tag>
         </div>
         <CodeEditor v-model="aText" language="json" min-height="100px" placeholder='{"a":1}' class="fill" />
       </div>
@@ -15,7 +15,7 @@
         <div class="pane-title">
           JSON B
           <el-tag v-if="errB" type="danger" size="small" effect="plain">✗ {{ errB }}</el-tag>
-          <el-tag v-else-if="bText.trim()" type="success" size="small" effect="plain">✓</el-tag>
+          <el-tag v-else-if="bText.trim()" type="success" size="small" effect="plain">✓ {{ FORMAT_LABELS[fmtB] }}</el-tag>
         </div>
         <CodeEditor v-model="bText" language="json" min-height="100px" placeholder='{"a":2}' class="fill" />
       </div>
@@ -36,19 +36,22 @@ import { EditorState } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
 import { MergeView } from '@codemirror/merge'
 import CodeEditor from '../../shared/CodeEditor.vue'
+import { parseJsonLenient, FORMAT_LABELS, type JsonInputFormat } from '../../shared/lenient-json'
 
 const aText = ref('')
 const bText = ref('')
 const normalize = ref(true)
 const errA = ref('')
 const errB = ref('')
+const fmtA = ref<JsonInputFormat>('json')
+const fmtB = ref<JsonInputFormat>('json')
 const mergeHost = ref<HTMLElement | null>(null)
 let mv: MergeView | null = null
 
-const ro = [EditorState.readOnly.of(true), EditorView.editable.of(false)]
+const ro = [EditorState.readOnly.of(true), EditorView.editable.of(false), EditorView.lineWrapping]
 
 /** 递归排序对象键并序列化，消除键序噪声；数组保持原序 */
-function canonicalize(text: string): string {
+function sortString(value: unknown): string {
   const sortValue = (v: unknown): unknown => {
     if (Array.isArray(v)) return v.map(sortValue)
     if (v && typeof v === 'object') {
@@ -60,25 +63,26 @@ function canonicalize(text: string): string {
     }
     return v
   }
-  return JSON.stringify(sortValue(JSON.parse(text)), null, 2)
+  return JSON.stringify(sortValue(value), null, 2)
 }
 
 function updateDiff(): void {
   if (!mergeHost.value) return
   let docA = aText.value
   let docB = bText.value
-  errA.value = ''
-  errB.value = ''
-  if (normalize.value) {
+  const sides = [
+    { text: aText, err: errA, fmt: fmtA, apply: (v: unknown) => (docA = sortString(v)) },
+    { text: bText, err: errB, fmt: fmtB, apply: (v: unknown) => (docB = sortString(v)) }
+  ]
+  for (const side of sides) {
+    side.err.value = ''
+    if (!side.text.value.trim()) continue
     try {
-      if (docA.trim()) docA = canonicalize(docA)
+      const r = parseJsonLenient(side.text.value)
+      side.fmt.value = r.format
+      if (normalize.value) side.apply(r.value)
     } catch (err) {
-      errA.value = err instanceof Error ? err.message.slice(0, 60) : 'JSON 不合法'
-    }
-    try {
-      if (docB.trim()) docB = canonicalize(docB)
-    } catch (err) {
-      errB.value = err instanceof Error ? err.message.slice(0, 60) : 'JSON 不合法'
+      side.err.value = (err instanceof Error ? err.message : String(err)).slice(0, 60)
     }
   }
   mv?.destroy()
@@ -114,6 +118,8 @@ onBeforeUnmount(() => mv?.destroy())
   display: flex;
   flex-direction: column;
   gap: 6px;
+  /* min-width: 0 防止长不可断行内容把 1fr 轨道撑宽挤扁邻列 */
+  min-width: 0;
 }
 
 .pane-title {

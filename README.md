@@ -151,6 +151,9 @@ Element Plus 的 `html.dark` 基底。插件页面经 Element Plus 变量自动�
   （CodeMirror merge 双栏）、正则测试（实时高亮 + 分组提取）、Postman（经本机后端代理转发，带
   SSRF 防护）、WebSocket 测试、时间戳转换、Cron 表达式（cron-parser）、URL/Base64 编解码、
   哈希计算（MD5/SHA-1/SHA-256，文本与文件）、UUID 生成
+- **JSON 宽松输入**：JSON 美化 / JSON 比较自动识别三种非严格输入——**JSON5**（无引号键/单引号/
+  尾逗号/注释）、**JS 对象字面量**（`undefined` 值自动转 `null`）、**转义 JSON 文本**（日志里拷出的
+  `{\"a\":1}`，含多重转义自动逐层还原，带外层引号亦可），校验标签显示识别结果；输出一律为严格 JSON
 - **性能设计**：工具组件全部 `defineAsyncComponent` 懒加载（未打开零执行）；工作区 `keep-alive
   :max=6` LRU 缓存（内存有界，回访秒开）；实时解析类 300ms 防抖；WebSocket 切走自动断开
 - **Postman 网络通道**：渲染层受 CORS 限制，任意域请求统一走 Go 后端 `POST /api/tools/proxy`
