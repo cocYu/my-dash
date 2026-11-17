@@ -1,0 +1,36 @@
+appId: com.mydash.desktop
+productName: myDash
+directories:
+  buildResources: build
+  output: dist
+files:
+  - out/**
+asar: true
+# Go 后端 + 托盘图标作为运行时资源打进安装包
+extraResources:
+  - from: backend/bin/backend.exe
+    to: backend/backend.exe
+  - from: resources/icons
+    to: icons
+win:
+  icon: build/icon.ico
+  target:
+    - target: nsis
+      arch:
+        - x64
+nsis:
+  oneClick: true
+  perMachine: false
+  createDesktopShortcut: always
+  shortcutName: myDash
+# ---- macOS 构建预留（需在 macOS 上执行 npm run build:mac）----
+# mac:
+#   icon: build/icon.icns
+#   category: public.app-category.productivity
+#   target:
+#     - dmg
+# ---- Linux 构建预留 ----
+# linux:
+#   icon: build/icon-512.png
+#   target:
+#     - AppImage

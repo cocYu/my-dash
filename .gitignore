@@ -1,0 +1,19 @@
+node_modules/
+out/
+dist/
+backend/bin/
+*.log
+.DS_Store
+output/
+
+# 构建缓存与本地工具状态
+*.tsbuildinfo
+.zcode/
+.idea/
+.vscode/
+
+# 环境与系统文件
+.env
+.env.*
+Thumbs.db
+desktop.ini
