@@ -241,7 +241,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onDeactivated, onMounted, ref, watch } from 'vue'
 import { EditorState } from '@codemirror/state'
 import { EditorView, keymap } from '@codemirror/view'
 import { basicSetup } from 'codemirror'
@@ -894,6 +894,11 @@ function onGlobalKeydown(e: KeyboardEvent): void {
   }
 }
 onMounted(() => window.addEventListener('keydown', onGlobalKeydown))
+// keep-alive 切走（顶部菜单跳页）前把未落盘的编辑立即保存：
+// 此前卸载时直接丢弃防抖定时器，800ms 内的编辑会静默丢失
+onDeactivated(() => {
+  if (saveState.value === 'dirty') void saveNow()
+})
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', onGlobalKeydown)
   if (saveTimer) clearTimeout(saveTimer)

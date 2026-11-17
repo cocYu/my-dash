@@ -49,7 +49,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, onActivated, onBeforeUnmount, onDeactivated, onMounted, ref, watch } from 'vue'
 import NoteTree from '../components/notes/NoteTree.vue'
 import NoteOutline from '../components/notes/NoteOutline.vue'
 import { notesPanelMode } from '../components/notes/panel-state'
@@ -138,15 +138,26 @@ async function createRootNote(): Promise<void> {
   await selectNote(note.id)
 }
 
-// 托盘「新建笔记」：主进程经 notes:quick-create 事件触发
-const offQuickCreate = window.api?.onQuickCreate
-  ? window.api.onQuickCreate(() => {
-      void createRootNote()
-    })
-  : null
+// 托盘「新建笔记」：主进程经 notes:quick-create 事件触发。
+// keep-alive 下本页切走不卸载，改用 activated/deactivated 挂卸监听（仅本页可见时响应）
+let offQuickCreate: (() => void) | null = null
+
+function bindQuickCreate(): void {
+  if (offQuickCreate || !window.api?.onQuickCreate) return
+  offQuickCreate = window.api.onQuickCreate(() => {
+    void createRootNote()
+  })
+}
+
+function unbindQuickCreate(): void {
+  offQuickCreate?.()
+  offQuickCreate = null
+}
 
 onMounted(refreshMetas)
-onBeforeUnmount(() => offQuickCreate?.())
+onActivated(bindQuickCreate)
+onDeactivated(unbindQuickCreate)
+onBeforeUnmount(unbindQuickCreate)
 </script>
 
 <style scoped>

@@ -46,7 +46,10 @@
     <el-main class="main">
       <router-view v-slot="{ Component }">
         <transition name="fade-slide" mode="out-in">
-          <component :is="Component" />
+          <!-- keep-alive 缓存各页面实例：顶部菜单切回时免重挂载/重拉数据/重建编辑器 -->
+          <keep-alive>
+            <component :is="Component" />
+          </keep-alive>
         </transition>
       </router-view>
     </el-main>
@@ -124,21 +127,21 @@ body {
   padding: 20px 18px 24px;
 }
 
-/* 路由切换动效 */
+/* 路由切换动效（短促轻移：out-in 串行总时长 = 两段之和，压短到 100ms/段） */
 .fade-slide-enter-active,
 .fade-slide-leave-active {
   transition:
-    opacity 0.22s ease,
-    transform 0.22s ease;
+    opacity 0.1s ease,
+    transform 0.1s ease;
 }
 
 .fade-slide-enter-from {
   opacity: 0;
-  transform: translateY(10px);
+  transform: translateY(6px);
 }
 
 .fade-slide-leave-to {
   opacity: 0;
-  transform: translateY(-6px);
+  transform: translateY(-4px);
 }
 </style>
