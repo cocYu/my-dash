@@ -5,11 +5,11 @@ import fs from 'node:fs'
 import http from 'node:http'
 import path from 'node:path'
 import { attachmentsDir } from '../attachments'
-import { cloudDelete, cloudDownload, cloudUpload } from './cloud'
+import { cloudDelete, cloudDownload, cloudList, cloudUpload } from './cloud'
 import { readConfig, syncDir, writeConfig, type SyncConfig } from './config'
 import { getLastStartOptions, startBackend, stopBackend } from '../backend'
 import { pluginStorageDirs, refreshManager } from '../plugins/manager'
-import type { SyncHistoryRecord as HistoryRecord } from '../../types/sync'
+import type { RemoteBackupRecord, SyncHistoryRecord as HistoryRecord } from '../../types/sync'
 
 export type { SyncHistoryRecord as HistoryRecord } from '../../types/sync'
 
@@ -43,6 +43,11 @@ function pushHistory(rec: HistoryRecord): void {
 
 function tmpDir(): string {
   return path.join(syncDir(), 'tmp')
+}
+
+/** 拉取云端实际存在的备份列表（用已保存的配置；换新设备后由此发现可还原的备份） */
+export function listRemoteBackups(): Promise<RemoteBackupRecord[]> {
+  return cloudList(readConfig())
 }
 
 function backupFileName(now = new Date()): string {

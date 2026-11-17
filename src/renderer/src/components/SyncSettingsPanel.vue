@@ -90,6 +90,37 @@
       </div>
     </div>
 
+    <!-- 云端备份 -->
+    <div class="block">
+      <div class="block-title cloud-title">
+        <span>云端备份</span>
+        <el-button size="small" :loading="remoteLoading" @click="fetchRemote(false)">从云端刷新</el-button>
+      </div>
+      <div class="inline-hint remote-hint">
+        列出远端目录中实际存在的备份（与本地记录无关，以已保存的配置为准）。换新设备：配置同一同步目标并保存后，
+        点「从云端刷新」即可看到备份并还原。
+      </div>
+      <el-table v-loading="remoteLoading" :data="remoteBackups" stripe size="small" style="width: 100%">
+        <el-table-column label="备份时间" min-width="170">
+          <template #default="{ row }">
+            <template v-if="row.time">{{ new Date(row.time).toLocaleString() }}</template>
+            <span v-else class="inline-hint">{{ row.name }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="大小" min-width="90">
+          <template #default="{ row }">{{ row.size != null ? formatSize(row.size) : '-' }}</template>
+        </el-table-column>
+        <el-table-column label="操作" width="90" align="center">
+          <template #default="{ row }">
+            <el-button size="small" :disabled="restoring" @click="restore(row.remoteFile)">还原</el-button>
+          </template>
+        </el-table-column>
+        <template #empty>
+          <el-empty description="云端暂无备份（或尚未刷新）" :image-size="72" />
+        </template>
+      </el-table>
+    </div>
+
     <!-- 同步记录 -->
     <div class="block">
       <div class="block-title">同步记录</div>
@@ -123,7 +154,7 @@
             <el-button
               size="small"
               :disabled="row.direction !== 'backup' || row.status !== 'success' || !!row.purged || restoring"
-              @click="restore(row)"
+              @click="restore(row.remoteFile!)"
             >还原</el-button>
           </template>
         </el-table-column>
@@ -138,7 +169,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import type { SyncConfig, SyncHistoryRecord as HistoryRecord } from '../../../types/sync'
+import type { RemoteBackupRecord, SyncConfig, SyncHistoryRecord as HistoryRecord } from '../../../types/sync'
 
 const cfg = ref<SyncConfig>(emptyConfig())
 const testing = ref(false)
@@ -147,6 +178,8 @@ const syncing = ref(false)
 const restoring = ref(false)
 const historyLoading = ref(false)
 const history = ref<HistoryRecord[]>([])
+const remoteLoading = ref(false)
+const remoteBackups = ref<RemoteBackupRecord[]>([])
 const dailyTime = ref<Date>(new Date('2000-01-01T03:00:00'))
 
 function emptyConfig(): SyncConfig {
@@ -209,6 +242,7 @@ async function syncNow(): Promise<void> {
     const rec = (await window.api.sync.run()) as { size: number }
     ElMessage.success(`同步完成（${formatSize(rec.size)}）`)
     await fetchHistory()
+    await fetchRemote(true)
   } catch (err) {
     ElMessage.error(`同步失败：${err instanceof Error ? err.message : String(err)}`)
     await fetchHistory()
@@ -217,7 +251,7 @@ async function syncNow(): Promise<void> {
   }
 }
 
-async function restore(row: HistoryRecord): Promise<void> {
+async function restore(remoteFile: string): Promise<void> {
   await ElMessageBox.confirm(
     '将从该备份还原数据库与插件。当前数据会被备份包内容覆盖，未包含在备份内的插件会保留。继续吗？',
     '还原确认',
@@ -225,7 +259,7 @@ async function restore(row: HistoryRecord): Promise<void> {
   )
   restoring.value = true
   try {
-    await window.api.sync.restore(row.remoteFile!)
+    await window.api.sync.restore(remoteFile)
     ElMessage.success('还原完成，正在刷新数据…')
     await reloadPluginsAndData()
     await fetchHistory()
@@ -253,6 +287,27 @@ async function fetchHistory(): Promise<void> {
   }
 }
 
+/** 拉取云端备份列表；silent 为 true 时不弹错误提示（挂载预取用） */
+async function fetchRemote(silent: boolean): Promise<void> {
+  remoteLoading.value = true
+  try {
+    remoteBackups.value = (await window.api.sync.listRemote()) as RemoteBackupRecord[]
+  } catch (err) {
+    remoteBackups.value = []
+    if (!silent) {
+      ElMessage.error(`拉取云端备份失败：${err instanceof Error ? err.message : String(err)}`)
+    }
+  } finally {
+    remoteLoading.value = false
+  }
+}
+
+/** 配置过同步目标才预取，避免全新环境一进设置页就报错 */
+function targetConfigured(): boolean {
+  const c = cfg.value
+  return c.target === 'webdav' ? !!c.webdav.url : !!c.s3.endpoint && !!c.s3.bucket
+}
+
 function formatSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
@@ -262,6 +317,7 @@ function formatSize(bytes: number): string {
 onMounted(async () => {
   await fetchConfig()
   await fetchHistory()
+  if (targetConfigured()) await fetchRemote(true)
 })
 </script>
 
@@ -310,5 +366,16 @@ onMounted(async () => {
   display: flex;
   align-items: center;
   gap: 12px;
+}
+
+.cloud-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.remote-hint {
+  margin-bottom: 10px;
+  line-height: 1.6;
 }
 </style>

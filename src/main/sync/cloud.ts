@@ -1,8 +1,27 @@
-// 云端传输抽象：WebDAV 与 S3 两种目标的上传/下载/删除/连通性测试。
-import { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand, HeadBucketCommand } from '@aws-sdk/client-s3'
-import { createClient, type WebDAVClient } from 'webdav'
+// 云端传输抽象：WebDAV 与 S3 两种目标的上传/下载/删除/列举/连通性测试。
+import {
+  S3Client,
+  PutObjectCommand,
+  GetObjectCommand,
+  DeleteObjectCommand,
+  HeadBucketCommand,
+  ListObjectsV2Command
+} from '@aws-sdk/client-s3'
+import { createClient, type WebDAVClient, type FileStat } from 'webdav'
 import fs from 'node:fs'
 import type { SyncConfig } from './config'
+import type { RemoteBackupRecord } from '../../types/sync'
+
+/** 备份文件命名规则（与 service.ts 的 backupFileName 对应） */
+const BACKUP_NAME_RE = /^mydash-backup-\d{8}-\d{6}\.zip$/
+
+/** 从备份文件名解析 ISO 时间：mydash-backup-20261117-220412.zip -> 2026-11-17T22:04:12 */
+export function backupTimeOf(name: string): string | undefined {
+  const m = /^mydash-backup-(\d{8})-(\d{6})\.zip$/.exec(name)
+  if (!m) return undefined
+  const [, d, t] = m
+  return `${d.slice(0, 4)}-${d.slice(4, 6)}-${d.slice(6, 8)}T${t.slice(0, 2)}:${t.slice(2, 4)}:${t.slice(4, 6)}`
+}
 
 export type CloudKind = 'webdav' | 's3'
 
@@ -73,6 +92,51 @@ export async function cloudDelete(cfg: SyncConfig, remoteFile: string): Promise<
   }
   const client = s3Client(cfg)
   await client.send(new DeleteObjectCommand({ Bucket: bucketOf(cfg), Key: remoteLocation(cfg, remoteFile) }))
+}
+
+/** 列举云端实际存在的备份（按备份时间倒序）；换新设备拉取备份列表用 */
+export async function cloudList(cfg: SyncConfig): Promise<RemoteBackupRecord[]> {
+  const list: RemoteBackupRecord[] =
+    cfg.target === 'webdav' ? await listWebdav(cfg) : await listS3(cfg)
+  // time 来自文件名，等价于按文件名倒序
+  return list.sort((a, b) => (b.time ?? '').localeCompare(a.time ?? ''))
+}
+
+async function listWebdav(cfg: SyncConfig): Promise<RemoteBackupRecord[]> {
+  const dir = (cfg.remotePath || '/mydash-backup').replace(/\/+$/, '')
+  let items: FileStat[]
+  try {
+    items = await webdavClient(cfg).getDirectoryContents(dir)
+  } catch (err) {
+    // 目录尚不存在 = 云端还没有任何备份
+    const status = (err as { status?: number; statusCode?: number }).status ??
+      (err as { statusCode?: number }).statusCode
+    if (status === 404) return []
+    throw err
+  }
+  return items
+    .filter((it) => it.type === 'file' && BACKUP_NAME_RE.test(it.basename))
+    .map((it) => ({
+      remoteFile: `${dir}/${it.basename}`,
+      name: it.basename,
+      time: backupTimeOf(it.basename),
+      size: it.size,
+      lastModified: it.lastmod
+    }))
+}
+
+async function listS3(cfg: SyncConfig): Promise<RemoteBackupRecord[]> {
+  // 与 remoteLocation 一致：S3 的对象 key 即纯文件名（目录前缀不参与）
+  const res = await s3Client(cfg).send(new ListObjectsV2Command({ Bucket: bucketOf(cfg) }))
+  return (res.Contents ?? [])
+    .filter((o): o is { Key: string; Size?: number; LastModified?: Date } => !!o.Key && BACKUP_NAME_RE.test(o.Key))
+    .map((o) => ({
+      remoteFile: o.Key,
+      name: o.Key,
+      time: backupTimeOf(o.Key),
+      size: o.Size,
+      lastModified: o.LastModified?.toISOString()
+    }))
 }
 
 /** 连通性测试：失败时抛错（message 面向用户展示） */

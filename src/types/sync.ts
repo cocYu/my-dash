@@ -47,3 +47,16 @@ export interface SyncHistoryRecord {
   /** 远端文件已按保留份数清理（记录保留，文件已不在） */
   purged?: boolean
 }
+
+/** 云端实际存在的备份（list 远端目录得到，与本地历史无关，供换机恢复） */
+export interface RemoteBackupRecord {
+  /** 还原时回传的远端文件标识：WebDAV 为「目录/文件名」，S3 为对象 key */
+  remoteFile: string
+  /** 备份文件名（mydash-backup-YYYYMMDD-HHMMSS.zip） */
+  name: string
+  /** 从文件名解析出的备份时间（ISO），非备份命名规则的文件为 undefined */
+  time?: string
+  size?: number
+  /** 云端报告的最后修改时间（ISO），仅作展示兜底 */
+  lastModified?: string
+}

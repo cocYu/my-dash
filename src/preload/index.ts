@@ -93,7 +93,9 @@ const api = {
     testConnection: (cfg: unknown): Promise<void> => ipcRenderer.invoke('sync:test-connection', cfg),
     run: (): Promise<unknown> => ipcRenderer.invoke('sync:run'),
     restore: (remoteFile: string): Promise<unknown> => ipcRenderer.invoke('sync:restore', remoteFile),
-    getHistory: (): Promise<unknown[]> => ipcRenderer.invoke('sync:history')
+    getHistory: (): Promise<unknown[]> => ipcRenderer.invoke('sync:history'),
+    /** 列举云端实际存在的备份（换新设备时拉取可还原的备份列表） */
+    listRemote: (): Promise<unknown[]> => ipcRenderer.invoke('sync:list-remote')
   },
   settings: {
     getLoginItem: (): Promise<{ openAtLogin: boolean }> =>

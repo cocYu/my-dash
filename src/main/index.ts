@@ -13,7 +13,7 @@ import { initPluginManager, registerPluginIpc, registerPluginProtocol } from './
 import * as cloud from './sync/cloud'
 import { readConfig, writeConfig } from './sync/config'
 import { startScheduler } from './sync/scheduler'
-import { getHistory, restoreFromRecord, runSync, type SyncContext } from './sync/service'
+import { getHistory, listRemoteBackups, restoreFromRecord, runSync, type SyncContext } from './sync/service'
 // 副作用导入：plugin:// 协议特权声明必须在 app ready 前执行
 import './protocol-scheme'
 
@@ -97,6 +97,7 @@ async function bootstrap(): Promise<void> {
   ipcMain.handle('sync:run', () => runSync(syncContext, 'manual'))
   ipcMain.handle('sync:restore', (_e, remoteFile: string) => restoreFromRecord(syncContext, remoteFile))
   ipcMain.handle('sync:history', () => getHistory())
+  ipcMain.handle('sync:list-remote', () => listRemoteBackups())
   startScheduler(() => runSync(syncContext, 'scheduled'))
   registerExporterIpc()
   registerNotesImportIpc()
