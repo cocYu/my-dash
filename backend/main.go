@@ -40,6 +40,7 @@ func main() {
 		api.NewNoteHandler(database),
 		api.NewVersionHandler(database),
 		api.NewAdminHandler(database, *dbPath),
+		api.NewTodoHandler(database),
 		*token,
 	)
 

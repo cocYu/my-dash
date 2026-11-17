@@ -12,7 +12,7 @@ import (
 const headerToken = "X-API-Token"
 
 // New 创建 Gin 引擎。token 非空时所有 /api 接口都要求携带 X-API-Token。
-func New(folderHandler *api.FolderHandler, noteHandler *api.NoteHandler, versionHandler *api.VersionHandler, adminHandler *api.AdminHandler, token string) http.Handler {
+func New(folderHandler *api.FolderHandler, noteHandler *api.NoteHandler, versionHandler *api.VersionHandler, adminHandler *api.AdminHandler, todoHandler *api.TodoHandler, token string) http.Handler {
 	r := gin.New()
 	r.Use(gin.Recovery(), gin.Logger(), corsMiddleware())
 	if token != "" {
@@ -50,6 +50,21 @@ func New(folderHandler *api.FolderHandler, noteHandler *api.NoteHandler, version
 
 		// 附件引用扫描（供主进程孤儿回收）
 		apiGroup.GET("/attachments/referenced", noteHandler.ReferencedAttachments)
+
+		// 待办
+		apiGroup.GET("/todos", todoHandler.List)
+		apiGroup.POST("/todos", todoHandler.Create)
+		apiGroup.PUT("/todos/:id", todoHandler.Update)
+		apiGroup.POST("/todos/:id/status", todoHandler.SetStatus)
+		apiGroup.DELETE("/todos/:id", todoHandler.Delete)
+		apiGroup.GET("/todos/:id/comments", todoHandler.ListComments)
+		apiGroup.POST("/todos/:id/comments", todoHandler.CreateComment)
+		apiGroup.DELETE("/todos/:id/comments/:cid", todoHandler.DeleteComment)
+		apiGroup.GET("/todo-categories", todoHandler.ListCategories)
+		apiGroup.POST("/todo-categories", todoHandler.CreateCategory)
+		apiGroup.PUT("/todo-categories/:id", todoHandler.UpdateCategory)
+		apiGroup.DELETE("/todo-categories/:id", todoHandler.DeleteCategory)
+		apiGroup.GET("/todo-tags", todoHandler.ListTags)
 	}
 	return r
 }

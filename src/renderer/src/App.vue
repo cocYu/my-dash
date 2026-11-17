@@ -27,6 +27,10 @@
           <el-icon><Document /></el-icon>
           <span>笔记</span>
         </el-menu-item>
+        <el-menu-item index="/todos">
+          <el-icon><Finished /></el-icon>
+          <span>待办</span>
+        </el-menu-item>
         <!-- 插件注册的页面 -->
         <el-menu-item v-for="page in pluginRegistry.pages" :key="page.path" :index="page.path">
           <el-icon><component :is="page.icon ?? SetUp" /></el-icon>
@@ -51,7 +55,7 @@
 
 <script setup lang="ts">
 import { useRoute } from 'vue-router'
-import { Box, Document, Odometer, Setting, SetUp } from '@element-plus/icons-vue'
+import { Box, Document, Finished, Odometer, Setting, SetUp } from '@element-plus/icons-vue'
 import { pluginRegistry } from './plugins/store'
 
 const route = useRoute()
