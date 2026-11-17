@@ -3,6 +3,7 @@ import { randomBytes } from 'node:crypto'
 import net from 'node:net'
 import path from 'node:path'
 import { startBackend, stopBackend } from './backend'
+import { registerAttachmentsIpc, registerAttachmentsProtocol } from './attachments'
 import { registerExporterIpc } from './exporter'
 import { createAppMenu } from './menu'
 import { registerMdThemesIpc } from './md-themes'
@@ -100,6 +101,8 @@ async function bootstrap(): Promise<void> {
   registerExporterIpc()
   registerNotesImportIpc()
   registerMdThemesIpc()
+  registerAttachmentsIpc({ baseUrl: backendBaseUrl, token })
+  registerAttachmentsProtocol()
 
   createWindow()
   createAppMenu(() => mainWindow)

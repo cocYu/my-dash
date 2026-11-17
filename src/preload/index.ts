@@ -57,6 +57,19 @@ const api = {
     remove: (name: string): Promise<{ name: string; size: number }[]> =>
       ipcRenderer.invoke('md-themes:remove', name)
   },
+  attachments: {
+    /** 图片字节入库（内容寻址），返回附件名（attach://<name>） */
+    saveImage: (bytes: Uint8Array, ext: string): Promise<{ name: string }> =>
+      ipcRenderer.invoke('attachments:save-image', { bytes, ext }),
+    /** 系统对话框选图入库；取消返回 null */
+    pickImage: (): Promise<{ name: string }[] | null> => ipcRenderer.invoke('attachments:pick-image'),
+    /** 读取附件为 data URI（导出内嵌用） */
+    readDataUrl: (name: string): Promise<string> => ipcRenderer.invoke('attachments:read-data-url', name),
+    stats: (): Promise<{ count: number; bytes: number }> => ipcRenderer.invoke('attachments:stats'),
+    openDir: (): Promise<void> => ipcRenderer.invoke('attachments:open-dir'),
+    /** 清理未被任何笔记/版本引用的附件 */
+    gc: (): Promise<{ deleted: number; freedBytes: number }> => ipcRenderer.invoke('attachments:gc')
+  },
   plugins: {
     list: (): Promise<PluginInfo[]> => ipcRenderer.invoke('plugins:list'),
     setEnabled: (id: string, enabled: boolean): Promise<PluginInfo[]> =>

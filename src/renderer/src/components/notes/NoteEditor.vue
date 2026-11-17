@@ -42,6 +42,9 @@
         </el-option-group>
       </el-select>
 
+      <el-button size="small" title="插入图片（也可直接粘贴截图 / 拖拽图片进编辑器）" @click="pickAndInsertImages">
+        <el-icon><Picture /></el-icon>
+      </el-button>
       <el-button size="small" title="Typora 主题（导入 / 管理）" @click="openTyporaDialog">
         <el-icon><Brush /></el-icon>
       </el-button>
@@ -87,6 +90,7 @@
         />
         <div v-show="viewMode !== 'edit'" class="preview-pane">
           <MdPreview
+            ref="previewRef"
             :content="content"
             :theme="mdThemeId"
             :custom-css="customCss"
@@ -237,7 +241,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { EditorState } from '@codemirror/state'
 import { EditorView, keymap } from '@codemirror/view'
 import { basicSetup } from 'codemirror'
@@ -256,6 +260,7 @@ import {
   Grid,
   MagicStick,
   Operation,
+  Picture,
   View
 } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -306,7 +311,17 @@ const SPLIT_KEY = 'mydash:md-split'
 const viewMode = ref<'edit' | 'split' | 'preview'>(
   (localStorage.getItem(VIEW_KEY) as 'edit' | 'split' | 'preview') ?? 'split'
 )
-watch(viewMode, (v) => localStorage.setItem(VIEW_KEY, v))
+watch(viewMode, (v) => {
+  localStorage.setItem(VIEW_KEY, v)
+  if (v === 'split') {
+    // 预览重新可见，锚点随 DOM 就绪后重建；同步双方到顶部对齐
+    void nextTick(() => {
+      rebuildAnchors()
+      lastEditorSetScroll = -1
+      lastPreviewSetScroll = -1
+    })
+  }
+})
 
 const splitRatio = ref(Number(localStorage.getItem(SPLIT_KEY)) || 50)
 watch(splitRatio, (v) => localStorage.setItem(SPLIT_KEY, String(v)))
@@ -424,7 +439,11 @@ const lastSavedAt = ref<Date | null>(null)
 let outlineTimer: ReturnType<typeof setTimeout> | null = null
 watch(content, () => {
   if (outlineTimer) clearTimeout(outlineTimer)
-  outlineTimer = setTimeout(() => emit('content-change', content.value), 300)
+  outlineTimer = setTimeout(() => {
+    emit('content-change', content.value)
+    // v-html 重渲染后锚点元素已换代，滚动同步的映射随之重建
+    rebuildAnchors()
+  }, 300)
 })
 
 // ---- CodeMirror ----
@@ -474,6 +493,79 @@ const cmTheme = EditorView.theme(
   { dark: document.documentElement.classList.contains('dark') }
 )
 
+// ---- 图片附件：粘贴 / 拖拽 / 选图 → 内容寻址入库 → 插入 attach:// 链接 ----
+const MIME_EXT: Record<string, string> = {
+  'image/png': '.png',
+  'image/jpeg': '.jpg',
+  'image/gif': '.gif',
+  'image/webp': '.webp',
+  'image/svg+xml': '.svg',
+  'image/bmp': '.bmp',
+  'image/avif': '.avif'
+}
+
+function imageFilesOf(list: FileList | null | undefined): File[] {
+  return [...(list ?? [])].filter((f) => MIME_EXT[f.type])
+}
+
+async function insertImageFiles(view: EditorView, drop: DragEvent | null, files: File[]): Promise<void> {
+  const parts: string[] = []
+  for (const file of files) {
+    try {
+      const bytes = new Uint8Array(await file.arrayBuffer())
+      const { name } = await window.api.attachments.saveImage(bytes, MIME_EXT[file.type])
+      parts.push(`![图片](attach://${name})`)
+    } catch (err) {
+      ElMessage.error(`图片入库失败：${err instanceof Error ? err.message : String(err)}`)
+    }
+  }
+  if (parts.length === 0) return
+  const insert = parts.join('\n')
+  let pos = view.state.selection.main.to
+  if (drop) {
+    const coords = view.posAtCoords({ x: drop.clientX, y: drop.clientY })
+    if (coords != null) pos = coords
+  }
+  const doc = view.state.doc
+  const needBreakBefore = pos > 0 && doc.sliceString(Math.max(0, pos - 1), pos) !== '\n'
+  const needBreakAfter = pos < doc.length && doc.sliceString(pos, pos + 1) !== '\n'
+  const text = `${needBreakBefore ? '\n\n' : ''}${insert}${needBreakAfter ? '\n' : ''}`
+  view.dispatch({ changes: { from: pos, insert: text } })
+  view.focus()
+}
+
+const attachHandlers = EditorView.domEventHandlers({
+  dragover: (event) => {
+    if ([...(event.dataTransfer?.items ?? [])].some((i) => i.kind === 'file')) event.preventDefault()
+    return false
+  },
+  drop: (event, view) => {
+    const files = imageFilesOf(event.dataTransfer?.files)
+    if (files.length === 0) return false
+    event.preventDefault()
+    void insertImageFiles(view, event as DragEvent, files)
+    return true
+  },
+  paste: (event, view) => {
+    const files = imageFilesOf(event.clipboardData?.files)
+    if (files.length === 0) return false
+    event.preventDefault()
+    void insertImageFiles(view, null, files)
+    return true
+  }
+})
+
+async function pickAndInsertImages(): Promise<void> {
+  const list = await window.api.attachments.pickImage()
+  if (!list || list.length === 0 || !editorView) return
+  const insert = list.map((x) => `![图片](attach://${x.name})`).join('\n')
+  const pos = editorView.state.selection.main.to
+  const doc = editorView.state.doc
+  const needBreakBefore = pos > 0 && doc.sliceString(Math.max(0, pos - 1), pos) !== '\n'
+  editorView.dispatch({ changes: { from: pos, insert: `${needBreakBefore ? '\n\n' : ''}${insert}\n` } })
+  editorView.focus()
+}
+
 function createEditor(): void {
   if (!editorContainer.value || editorView) return
   // 首挂载即同步当前笔记内容（组件按 key 重建，watch 不会触发）
@@ -488,6 +580,7 @@ function createEditor(): void {
         markdown({ base: markdownLanguage, codeLanguages: languages }),
         EditorView.lineWrapping,
         cmTheme,
+        attachHandlers,
         syntaxHighlighting(cmHighlight),
         keymap.of([
           {
@@ -513,6 +606,7 @@ onMounted(createEditor)
 
 // 挂载时若上次选中的是 Typora 主题，恢复其 CSS
 onMounted(() => {
+  // 恢复上次选中的 Typora 主题
   void refreshUserThemes()
   const id = mdThemeId.value
   if (id.startsWith(USER_THEME_PREFIX)) {
@@ -524,6 +618,12 @@ onMounted(() => {
       .catch(() => {
         ElMessage.error(`主题 CSS 读取失败：${name}`)
       })
+  }
+  // 分屏滚动同步：编辑器侧与预览侧监听（处理器内部自行判断 split 模式）
+  editorView?.scrollDOM.addEventListener('scroll', onEditorScroll, { passive: true })
+  previewEl()?.addEventListener('scroll', onPreviewScroll, { passive: true })
+  if (viewMode.value === 'split') {
+    void nextTick(rebuildAnchors)
   }
 })
 
@@ -545,6 +645,172 @@ function revealHeading(item: OutlineItem): void {
 }
 
 defineExpose({ revealHeading })
+
+// ---- 分屏滚动同步：源码 ↔ 预览 ----
+// 映射依据：markdown-it 为顶层块输出 data-line="源码行"，预览内 [data-line] 元素即锚点。
+// 性能：双向滚动均 rAF 节流（每帧至多一次）；每帧只读 2 个锚点 offsetTop + 二分查找；
+// 大文档不做任何全量布局测量。程序化滚动用"写入值回声"判别，避免双向死循环。
+const previewRef = ref<InstanceType<typeof MdPreview> | null>(null)
+
+interface ScrollAnchor {
+  line: number
+  el: HTMLElement
+}
+
+let anchors: ScrollAnchor[] = []
+let editorRaf = 0
+let previewRaf = 0
+let lastEditorSetScroll = -1
+let lastPreviewSetScroll = -1
+
+function previewEl(): HTMLElement | null {
+  return (previewRef.value?.$el as HTMLElement | undefined) ?? null
+}
+
+function rebuildAnchors(): void {
+  const root = previewEl()
+  if (!root) return
+  anchors = [...root.querySelectorAll<HTMLElement>('[data-line]')].map((el) => ({
+    line: Number(el.dataset.line),
+    el
+  }))
+}
+
+/** 最后一个 line <= target 的锚点下标（-1 表示在首个锚点之前） */
+function anchorIndexForLine(target: number): number {
+  let lo = 0
+  let hi = anchors.length - 1
+  let found = -1
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1
+    if (anchors[mid].line <= target) {
+      found = mid
+      lo = mid + 1
+    } else {
+      hi = mid - 1
+    }
+  }
+  return found
+}
+
+/** 锚点在预览内容坐标系的 top（gBCR 相对容器，不依赖 offsetParent） */
+function anchorTop(el: HTMLElement, preview: HTMLElement): number {
+  return el.getBoundingClientRect().top - preview.getBoundingClientRect().top + preview.scrollTop
+}
+
+/** 最后一个 anchorTop <= target 的锚点下标（二分，~log n 次测量，无布局写入穿插） */
+function anchorIndexForTop(target: number, preview: HTMLElement): number {
+  let lo = 0
+  let hi = anchors.length - 1
+  let found = -1
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1
+    if (anchorTop(anchors[mid].el, preview) <= target) {
+      found = mid
+      lo = mid + 1
+    } else {
+      hi = mid - 1
+    }
+  }
+  return found
+}
+
+/** 编辑器 → 预览 */
+function syncPreviewFromEditor(): void {
+  const view = editorView
+  const preview = previewEl()
+  if (!view || !preview || viewMode.value !== 'split') return
+  const scroller = view.scrollDOM
+  const rect = scroller.getBoundingClientRect()
+  const pos = view.posAtCoords({ x: rect.left + 8, y: rect.top + 8 }, false)
+  const line = pos != null ? view.state.doc.lineAt(pos).number - 1 : 0
+
+  const editorMax = scroller.scrollHeight - scroller.clientHeight
+  const previewMax = preview.scrollHeight - preview.clientHeight
+  let target: number
+  if (editorMax > 0 && scroller.scrollTop >= editorMax - 2) {
+    target = previewMax // 编辑器到底 → 预览到底
+  } else if (anchors.length === 0 || line <= anchors[0].line) {
+    target = 0
+  } else {
+    const i = anchorIndexForLine(line)
+    const a = anchors[i]
+    const b = anchors[i + 1]
+    if (!b) {
+      target = anchorTop(a.el, preview)
+    } else {
+      const aTop = anchorTop(a.el, preview)
+      const bTop = b.el.getBoundingClientRect().top - preview.getBoundingClientRect().top + preview.scrollTop
+      const ratio = b.line > a.line ? (line - a.line) / (b.line - a.line) : 0
+      target = aTop + ratio * (bTop - aTop)
+    }
+  }
+  target = Math.max(0, Math.min(previewMax, target))
+  if (Math.abs(preview.scrollTop - target) < 1) return
+  lastPreviewSetScroll = target
+  preview.scrollTop = target
+}
+
+/** 预览 → 编辑器 */
+function syncEditorFromPreview(): void {
+  const view = editorView
+  const preview = previewEl()
+  if (!view || !preview || viewMode.value !== 'split') return
+  const scroller = view.scrollDOM
+  const previewMax = preview.scrollHeight - preview.clientHeight
+  const editorMax = scroller.scrollHeight - scroller.clientHeight
+
+  let targetLine: number
+  if (previewMax > 0 && preview.scrollTop >= previewMax - 2) {
+    targetLine = view.state.doc.lines // 预览到底 → 编辑器到底
+  } else if (anchors.length === 0 || preview.scrollTop <= 2) {
+    targetLine = 1
+  } else {
+    const i = anchorIndexForTop(preview.scrollTop, preview)
+    const a = anchors[i]
+    const b = anchors[i + 1]
+    if (!a) {
+      targetLine = 1
+    } else if (!b) {
+      targetLine = a.line + 1
+    } else {
+      const aTop = anchorTop(a.el, preview)
+      const bTop = anchorTop(b.el, preview)
+      const ratio = bTop > aTop ? (preview.scrollTop - aTop) / (bTop - aTop) : 0
+      targetLine = a.line + 1 + ratio * (b.line - a.line)
+    }
+  }
+  const pos = view.state.doc.line(Math.min(view.state.doc.lines, Math.max(1, Math.round(targetLine)))).from
+  view.dispatch({ effects: EditorView.scrollIntoView(pos, { y: 'start', yMargin: 0 }) })
+}
+
+function onEditorScroll(): void {
+  if (viewMode.value !== 'split') return
+  // 回声：本次 scrollTop 是我们为反向同步写入的值，忽略
+  if (lastEditorSetScroll >= 0) {
+    if (Math.abs(editorView!.scrollDOM.scrollTop - lastEditorSetScroll) < 2) return
+    lastEditorSetScroll = -1
+  }
+  if (editorRaf) return
+  editorRaf = requestAnimationFrame(() => {
+    editorRaf = 0
+    syncPreviewFromEditor()
+  })
+}
+
+function onPreviewScroll(): void {
+  if (viewMode.value !== 'split') return
+  const preview = previewEl()
+  if (preview && lastPreviewSetScroll >= 0) {
+    if (Math.abs(preview.scrollTop - lastPreviewSetScroll) < 2) return
+    lastPreviewSetScroll = -1
+  }
+  if (previewRaf) return
+  previewRaf = requestAnimationFrame(() => {
+    previewRaf = 0
+    syncEditorFromPreview()
+  })
+}
 
 // ---- 笔记切换：先落盘旧笔记，再装载新笔记 ----
 watch(
@@ -632,6 +898,10 @@ onBeforeUnmount(() => {
   window.removeEventListener('keydown', onGlobalKeydown)
   if (saveTimer) clearTimeout(saveTimer)
   if (outlineTimer) clearTimeout(outlineTimer)
+  if (editorRaf) cancelAnimationFrame(editorRaf)
+  if (previewRaf) cancelAnimationFrame(previewRaf)
+  editorView?.scrollDOM.removeEventListener('scroll', onEditorScroll)
+  previewEl()?.removeEventListener('scroll', onPreviewScroll)
 })
 
 // ---- 分屏拖条 ----
@@ -681,9 +951,9 @@ function safeName(): string {
   return (title.value.trim() || '未命名笔记').replace(/[\\/:*?"<>|]/g, '_')
 }
 
-function buildExportHtml(): string {
+async function buildExportHtml(): Promise<string> {
   const body = renderMarkdown(content.value)
-  return (
+  let html =
     `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>${title.value}</title>` +
     `<style>${katexCss}</style><style>${MD_THEMES_CSS}</style>` +
     `<style>body{margin:0;background:#fff}.md-body{max-width:860px;margin:0 auto;padding:40px 32px}</style>` +
@@ -691,7 +961,16 @@ function buildExportHtml(): string {
     `<style>${typoraCss.value}</style>` +
     `<style>${customCss.value}</style>` +
     `</head><body><div class="md-body ${mdThemeId.value.startsWith(USER_THEME_PREFIX) ? 'theme-custom' : `theme-${mdThemeId.value}`}">${body}</div></body></html>`
-  )
+  // 本地附件内嵌为 data URI，单文件离线可用
+  const names = [
+    ...new Set([...content.value.matchAll(/attach:\/\/([a-f0-9]{16}\.[a-z]+)/g)].map((m) => m[1]))
+  ]
+  for (const name of names) {
+    const dataUrl = await window.api.attachments.readDataUrl(name)
+    if (dataUrl) html = html.split(`attach://${name}`).join(dataUrl)
+  }
+  // data-line 是应用内滚动同步用的标注，导出物不需要
+  return html.replace(/ data-line="\d+"/g, '')
 }
 
 async function onExport(command: string): Promise<void> {
@@ -712,13 +991,16 @@ async function onExport(command: string): Promise<void> {
       defaultName: `${name}.html`,
       filterName: 'HTML',
       ext: 'html',
-      data: buildExportHtml()
+      data: await buildExportHtml()
     })
     reportExport(r)
     return
   }
   if (command === 'pdf') {
-    const r = await window.api.exporter.savePdf({ defaultName: `${name}.pdf`, html: buildExportHtml() })
+    const r = await window.api.exporter.savePdf({
+      defaultName: `${name}.pdf`,
+      html: await buildExportHtml()
+    })
     reportExport(r)
   }
 }

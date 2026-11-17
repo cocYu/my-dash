@@ -47,6 +47,9 @@ func New(folderHandler *api.FolderHandler, noteHandler *api.NoteHandler, version
 
 		// 管理：数据库快照（供主进程备份打包）
 		apiGroup.GET("/admin/db/snapshot", adminHandler.Snapshot)
+
+		// 附件引用扫描（供主进程孤儿回收）
+		apiGroup.GET("/attachments/referenced", noteHandler.ReferencedAttachments)
 	}
 	return r
 }

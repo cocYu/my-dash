@@ -49,6 +49,27 @@
               @change="setLoginItem"
             />
           </div>
+
+          <div class="section-head attach-head">
+            <div>
+              <div class="row-title">图片附件</div>
+              <div class="row-desc">
+                笔记中粘贴 / 拖拽的图片按内容寻址存放；共 {{ attachStats.count }} 张，占用
+                {{ (attachStats.bytes / 1024 / 1024).toFixed(1) }} MB。清理只删除未被任何笔记（含历史版本）引用的图片。
+              </div>
+            </div>
+          </div>
+          <div class="attach-actions">
+            <el-button size="small" @click="refreshAttachStats">刷新</el-button>
+            <el-button size="small" @click="openAttachDir">打开附件目录</el-button>
+            <el-button
+              size="small"
+              type="danger"
+              plain
+              :loading="attachGcRunning"
+              @click="gcAttachments"
+            >清理未引用附件</el-button>
+          </div>
         </div>
 
         <!-- 外观 -->
@@ -106,6 +127,7 @@
 <script setup lang="ts">
 import { onMounted, ref, watch } from 'vue'
 import { Box, Check, Brush, InfoFilled, SwitchButton, UploadFilled } from '@element-plus/icons-vue'
+import { ElMessage } from 'element-plus'
 import { applyTheme, getSavedThemeId, THEMES, type ThemeMeta } from '../theme'
 import { appMeta } from '../api/http'
 import PluginSettingsPanel from '../components/PluginSettingsPanel.vue'
@@ -147,6 +169,30 @@ async function setLoginItem(open: boolean | string | number): Promise<void> {
   }
 }
 
+// ---- 图片附件 ----
+const attachStats = ref({ count: 0, bytes: 0 })
+const attachGcRunning = ref(false)
+
+async function refreshAttachStats(): Promise<void> {
+  attachStats.value = await window.api.attachments.stats()
+}
+
+function openAttachDir(): void {
+  void window.api.attachments.openDir()
+}
+
+async function gcAttachments(): Promise<void> {
+  attachGcRunning.value = true
+  try {
+    const { deleted, freedBytes } = await window.api.attachments.gc()
+    await refreshAttachStats()
+    if (deleted === 0) ElMessage.info('没有需要清理的未引用附件')
+    else ElMessage.success(`已清理 ${deleted} 张未引用图片，释放 ${(freedBytes / 1024 / 1024).toFixed(1)} MB`)
+  } finally {
+    attachGcRunning.value = false
+  }
+}
+
 onMounted(async () => {
   appVersion.value = appMeta.appVersion
   userDataPath.value = appMeta.userDataPath
@@ -156,6 +202,7 @@ onMounted(async () => {
   } catch {
     openAtLogin.value = false
   }
+  void refreshAttachStats()
 })
 </script>
 
@@ -227,6 +274,19 @@ onMounted(async () => {
   align-items: center;
   justify-content: space-between;
   padding: 4px 0;
+}
+
+.attach-head {
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid var(--divider);
+  align-items: flex-start;
+}
+
+.attach-actions {
+  display: flex;
+  gap: 8px;
+  padding: 2px 0 4px;
 }
 
 .row-title {

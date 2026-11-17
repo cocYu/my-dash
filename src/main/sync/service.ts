@@ -4,6 +4,7 @@ import AdmZip from 'adm-zip'
 import fs from 'node:fs'
 import http from 'node:http'
 import path from 'node:path'
+import { attachmentsDir } from '../attachments'
 import { cloudDelete, cloudDownload, cloudUpload } from './cloud'
 import { readConfig, syncDir, writeConfig, type SyncConfig } from './config'
 import { getLastStartOptions, startBackend, stopBackend } from '../backend'
@@ -82,7 +83,7 @@ async function downloadDbSnapshot(ctx: SyncContext, destFile: string): Promise<v
   })
 }
 
-/** 打包备份 zip：DB 快照 + 插件目录/KV/注册状态 + manifest */
+/** 打包备份 zip：DB 快照 + 插件目录/KV/注册状态 + 笔记图片附件 + manifest */
 async function createBackupZip(ctx: SyncContext): Promise<{ file: string; size: number }> {
   fs.mkdirSync(tmpDir(), { recursive: true })
   const name = backupFileName()
@@ -97,6 +98,10 @@ async function createBackupZip(ctx: SyncContext): Promise<{ file: string; size: 
     const { plugins } = pluginStorageDirs()
     if (fs.existsSync(plugins)) {
       zip.addLocalFolder(plugins, 'plugins')
+    }
+    const attachDir = attachmentsDir()
+    if (fs.existsSync(attachDir)) {
+      zip.addLocalFolder(attachDir, 'attachments')
     }
     zip.addFile(
       'manifest.json',
@@ -205,6 +210,16 @@ export async function restoreFromRecord(ctx: SyncContext, remoteFile: string): P
       fs.writeFileSync(dest, entry.getData())
     }
     refreshManager()
+
+    // 3b. 重建图片附件（DB 已整体替换，附件以备份内为准：先清空再铺入，防止残留引用外文件）
+    const attachDir = attachmentsDir()
+    fs.rmSync(attachDir, { force: true, recursive: true })
+    fs.mkdirSync(attachDir, { recursive: true })
+    for (const entry of zip.getEntries()) {
+      if (entry.isDirectory || !entry.entryName.startsWith('attachments/')) continue
+      const dest = path.join(attachDir, entry.entryName.slice('attachments/'.length))
+      fs.writeFileSync(dest, entry.getData())
+    }
 
     // 4. 重启后端（复用原端口/token/dbPath，渲染层连接不变）
     const opts = getLastStartOptions()
