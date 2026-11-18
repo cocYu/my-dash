@@ -100,6 +100,7 @@
             class="todo-row"
             :class="{ selected: item.todo.id === selectedId, closed: item.todo.status === 'closed', done: item.todo.status === 'done' }"
             @click="selectedId = item.todo.id"
+            @contextmenu.prevent="openRowMenu($event, item.todo)"
           >
             <el-checkbox
               class="row-check"
@@ -137,6 +138,7 @@
               class="todo-row subtask"
               :class="{ selected: sub.id === selectedId }"
               @click="selectedId = sub.id"
+              @contextmenu.prevent="openRowMenu($event, sub)"
             >
               <el-checkbox
                 class="row-check"
@@ -178,6 +180,24 @@
         <el-empty description="选择一条待办查看详情" :image-size="90" />
       </div>
     </div>
+
+    <!-- 行右键菜单 -->
+    <teleport to="body">
+      <div
+        v-if="ctxMenu.visible"
+        class="ctx-menu glass"
+        :style="{ left: ctxMenu.x + 'px', top: ctxMenu.y + 'px' }"
+      >
+        <template v-if="ctxMenu.todo">
+          <div
+            v-if="ctxMenu.todo.status === 'open'"
+            class="ctx-item"
+            @click="ctxRun(() => toggleDone(ctxMenu.todo!, true))"
+          >标记完成</div>
+          <div class="ctx-item danger" @click="ctxRun(() => removeRow(ctxMenu.todo!))">删除</div>
+        </template>
+      </div>
+    </teleport>
   </div>
 </template>
 
@@ -406,6 +426,42 @@ async function removeCategory(cat: TodoCategory): Promise<void> {
   if (filterCategory.value === cat.id) filterCategory.value = 'all'
   await refresh()
   ElMessage.success('分类已删除')
+}
+
+// ---- 行右键菜单 ----
+const ctxMenu = ref<{ visible: boolean; x: number; y: number; todo: Todo | null }>({
+  visible: false,
+  x: 0,
+  y: 0,
+  todo: null
+})
+
+function openRowMenu(event: MouseEvent, todo: Todo): void {
+  selectedId.value = todo.id
+  ctxMenu.value = { visible: true, x: event.clientX, y: event.clientY, todo }
+  window.addEventListener('click', closeCtxMenu, { once: true })
+}
+
+function closeCtxMenu(): void {
+  ctxMenu.value.visible = false
+}
+
+function ctxRun(fn: () => void): void {
+  closeCtxMenu()
+  fn()
+}
+
+async function removeRow(todo: Todo): Promise<void> {
+  await ElMessageBox.confirm(
+    todo.parent_id != null
+      ? `删除子任务「${todo.title}」后不可恢复。继续吗？`
+      : `删除待办「${todo.title}」后，其子任务与评论将一并删除。继续吗？`,
+    '删除待办',
+    { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' }
+  )
+  await deleteTodo(todo.id)
+  await refresh()
+  ElMessage.success('待办已删除')
 }
 
 onMounted(refresh)
@@ -753,5 +809,29 @@ onMounted(refresh)
   display: flex;
   align-items: center;
   justify-content: center;
+}
+
+/* 行右键菜单 */
+.ctx-menu {
+  position: fixed;
+  z-index: 3000;
+  min-width: 132px;
+  padding: 6px;
+  border-radius: 10px;
+}
+
+.ctx-item {
+  padding: 7px 12px;
+  border-radius: 6px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.ctx-item:hover {
+  background: var(--fill-hover);
+}
+
+.ctx-item.danger {
+  color: var(--el-color-danger);
 }
 </style>
