@@ -4,6 +4,7 @@ import { app, dialog, ipcMain, protocol, shell } from 'electron'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
 import { createHash } from 'node:crypto'
+import { readHistory } from './ai/history'
 
 const MAX_IMAGE = 20 * 1024 * 1024
 
@@ -118,6 +119,10 @@ export function registerAttachmentsIpc(ctx: { baseUrl: string; token: string }):
   ipcMain.handle('attachments:gc', async (): Promise<{ deleted: number; freedBytes: number }> => {
     ensureDir()
     const referenced = await fetchReferencedNames(ctx)
+    // 生图历史引用的图片同样受保护：用户主动删除对应历史后，下次 GC 才会回收
+    for (const item of readHistory()) {
+      for (const img of item.images) referenced.add(img.name)
+    }
     let deleted = 0
     let freedBytes = 0
     for (const f of fs.readdirSync(attachmentsDir())) {

@@ -4,6 +4,7 @@ import net from 'node:net'
 import path from 'node:path'
 import { startBackend, stopBackend } from './backend'
 import { registerAttachmentsIpc, registerAttachmentsProtocol } from './attachments'
+import { registerAiIpc } from './ai/ipc'
 import { registerExporterIpc } from './exporter'
 import { createAppMenu } from './menu'
 import { registerMdThemesIpc } from './md-themes'
@@ -121,6 +122,8 @@ async function bootstrap(): Promise<void> {
   registerMdThemesIpc()
   registerAttachmentsIpc({ baseUrl: backendBaseUrl, token })
   registerAttachmentsProtocol()
+  // AI 工作台（供应商配置加密落盘，网关层兼容 chat/responses/messages）
+  registerAiIpc()
 
   createWindow()
   createAppMenu(() => mainWindow)

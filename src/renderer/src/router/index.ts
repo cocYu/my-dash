@@ -34,6 +34,12 @@ const router = createRouter({
       meta: { title: '工具箱' }
     },
     {
+      path: '/ai',
+      name: 'ai',
+      component: () => import('../views/AIWorkbenchView.vue'),
+      meta: { title: 'AI 工作台' }
+    },
+    {
       path: '/settings',
       name: 'settings',
       component: () => import('../views/SettingsView.vue'),

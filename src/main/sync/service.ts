@@ -5,6 +5,8 @@ import fs from 'node:fs'
 import http from 'node:http'
 import path from 'node:path'
 import { attachmentsDir } from '../attachments'
+import { providersForBackup, writeProvidersFromBackup } from '../ai/config'
+import { readHistory, writeHistory } from '../ai/history'
 import { cloudDelete, cloudDownload, cloudList, cloudUpload } from './cloud'
 import { readConfig, syncDir, writeConfig, type SyncConfig } from './config'
 import { getLastStartOptions, startBackend, stopBackend } from '../backend'
@@ -88,7 +90,7 @@ async function downloadDbSnapshot(ctx: SyncContext, destFile: string): Promise<v
   })
 }
 
-/** 打包备份 zip：DB 快照 + 插件目录/KV/注册状态 + 笔记图片附件 + manifest */
+/** 打包备份 zip：DB 快照 + 插件目录/KV/注册状态 + 笔记图片附件 + AI 供应商配置 + manifest */
 async function createBackupZip(ctx: SyncContext): Promise<{ file: string; size: number }> {
   fs.mkdirSync(tmpDir(), { recursive: true })
   const name = backupFileName()
@@ -108,6 +110,10 @@ async function createBackupZip(ctx: SyncContext): Promise<{ file: string; size: 
     if (fs.existsSync(attachDir)) {
       zip.addLocalFolder(attachDir, 'attachments')
     }
+    // AI 供应商配置：apiKey 明文导出（与 DB 快照同一信任级别），换机还原时由本机重新加密
+    zip.addFile('ai/providers.json', Buffer.from(JSON.stringify(providersForBackup(), null, 2), 'utf-8'))
+    // 生图历史元数据（图片本体在 attachments/ 中一同打包）
+    zip.addFile('ai/image-history.json', Buffer.from(JSON.stringify(readHistory(), null, 2), 'utf-8'))
     zip.addFile(
       'manifest.json',
       Buffer.from(
@@ -224,6 +230,30 @@ export async function restoreFromRecord(ctx: SyncContext, remoteFile: string): P
       if (entry.isDirectory || !entry.entryName.startsWith('attachments/')) continue
       const dest = path.join(attachDir, entry.entryName.slice('attachments/'.length))
       fs.writeFileSync(dest, entry.getData())
+    }
+
+    // 3c. AI 供应商配置（明文随包传输，落盘时用本机 safeStorage 重新加密）
+    // 旧备份无此文件时跳过，保留本机现有配置
+    const aiEntry = zip.getEntry('ai/providers.json')
+    if (aiEntry) {
+      try {
+        const parsed = JSON.parse(aiEntry.getData().toString('utf-8'))
+        if (Array.isArray(parsed)) writeProvidersFromBackup(parsed)
+      } catch (err) {
+        console.error('[sync] AI 供应商配置还原失败，保留现有配置:', err)
+      }
+    }
+
+    // 3d. AI 生图历史元数据（图片本体已随 attachments/ 还原）
+    // 旧备份无此文件时跳过，保留本机现有历史
+    const histEntry = zip.getEntry('ai/image-history.json')
+    if (histEntry) {
+      try {
+        const parsed = JSON.parse(histEntry.getData().toString('utf-8'))
+        if (Array.isArray(parsed)) writeHistory(parsed)
+      } catch (err) {
+        console.error('[sync] AI 生图历史还原失败，保留现有历史:', err)
+      }
     }
 
     // 4. 重启后端（复用原端口/token/dbPath，渲染层连接不变）

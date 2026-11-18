@@ -11,6 +11,7 @@ output/
 .zcode/
 .idea/
 .vscode/
+.workbuddy/
 
 # 环境与系统文件
 .env

@@ -1,4 +1,32 @@
 import { contextBridge, ipcRenderer } from 'electron'
+import type {
+  AiChatRequest,
+  AiChatResponse,
+  AiHistoryImage,
+  AiImageHistoryItem,
+  AiImageRequest,
+  AiImageResult,
+  AiModel,
+  AiPromptEnhanceRequest,
+  AiProvider
+} from '../types/ai'
+
+export type {
+  AiChatMessage,
+  AiChatRequest,
+  AiChatResponse,
+  AiHistoryImage,
+  AiImageHistoryItem,
+  AiImageMode,
+  AiImageRequest,
+  AiImageResult,
+  AiModel,
+  AiPromptEnhanceRequest,
+  AiProtocol,
+  AiProvider,
+  AiVendorPreset
+} from '../types/ai'
+export { AI_PRESETS } from '../types/ai'
 
 export interface PluginInfo {
   id: string
@@ -115,6 +143,26 @@ const api = {
       ipcRenderer.invoke('settings:get-login-item'),
     setLoginItem: (open: boolean): Promise<void> =>
       ipcRenderer.invoke('settings:set-login-item', open)
+  },
+  /** AI 工作台：供应商配置 / 统一网关 / 生图 / 历史 / 提示词增强 */
+  ai: {
+    providers: {
+      list: (): Promise<AiProvider[]> => ipcRenderer.invoke('ai:providers:list'),
+      save: (list: AiProvider[]): Promise<AiProvider[]> => ipcRenderer.invoke('ai:providers:save', list),
+      fetchModels: (id: string): Promise<AiModel[]> => ipcRenderer.invoke('ai:providers:fetch-models', id),
+      test: (id: string): Promise<{ models: number }> => ipcRenderer.invoke('ai:providers:test', id)
+    },
+    chat: (req: AiChatRequest): Promise<AiChatResponse> => ipcRenderer.invoke('ai:chat', req),
+    generateImage: (req: AiImageRequest): Promise<AiImageResult[]> =>
+      ipcRenderer.invoke('ai:image:generate', req),
+    history: {
+      list: (): Promise<AiImageHistoryItem[]> => ipcRenderer.invoke('ai:history:list'),
+      delete: (id: string): Promise<AiImageHistoryItem[]> => ipcRenderer.invoke('ai:history:delete', id),
+      clear: (): Promise<AiImageHistoryItem[]> => ipcRenderer.invoke('ai:history:clear')
+    },
+    /** 用指定供应商模型优化提示词，返回增强后的纯文本 */
+    enhancePrompt: (req: AiPromptEnhanceRequest): Promise<string> =>
+      ipcRenderer.invoke('ai:prompt:enhance', req)
   },
   exporter: {
     /** 文本类导出（Markdown / HTML）：弹保存对话框并写文件 */

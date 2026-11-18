@@ -35,6 +35,10 @@
           <el-icon><Suitcase /></el-icon>
           <span>工具箱</span>
         </el-menu-item>
+        <el-menu-item index="/ai">
+          <el-icon><MagicStick /></el-icon>
+          <span>AI 工作台</span>
+        </el-menu-item>
         <!-- 插件注册的页面 -->
         <el-menu-item v-for="page in pluginRegistry.pages" :key="page.path" :index="page.path">
           <el-icon><component :is="page.icon ?? SetUp" /></el-icon>
@@ -63,7 +67,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useRoute } from 'vue-router'
-import { Box, Document, Finished, Odometer, Setting, SetUp, Suitcase } from '@element-plus/icons-vue'
+import { Box, Document, Finished, MagicStick, Odometer, Setting, SetUp, Suitcase } from '@element-plus/icons-vue'
 import { pluginRegistry } from './plugins/store'
 
 const route = useRoute()
