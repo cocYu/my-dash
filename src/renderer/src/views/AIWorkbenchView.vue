@@ -15,6 +15,10 @@
             <el-icon><Connection /></el-icon>
             <span>供应商管理</span>
           </el-menu-item>
+          <el-menu-item index="agent">
+            <el-icon><ChatDotRound /></el-icon>
+            <span>AI 助手</span>
+          </el-menu-item>
           <el-menu-item index="image">
             <el-icon><Picture /></el-icon>
             <span>AI 生图</span>
@@ -26,9 +30,10 @@
         </el-menu>
       </div>
 
-      <!-- 右侧内容面板 -->
-      <div class="glass content-panel">
+      <!-- 右侧内容面板；AI 助手需要满幅布局，去掉内边距与滚动 -->
+      <div class="glass content-panel" :class="{ flush: active === 'agent' }">
         <ProviderManager v-show="active === 'providers'" />
+        <AgentWorkbench v-show="active === 'agent'" />
         <ImageGen v-show="active === 'image'" />
         <UsageStats v-show="active === 'usage'" />
       </div>
@@ -38,19 +43,20 @@
 
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
-import { Connection, DataAnalysis, Picture } from '@element-plus/icons-vue'
+import { ChatDotRound, Connection, DataAnalysis, Picture } from '@element-plus/icons-vue'
 import ProviderManager from '../components/ai/ProviderManager.vue'
+import AgentWorkbench from '../components/ai/AgentWorkbench.vue'
 import ImageGen from '../components/ai/ImageGen.vue'
 import UsageStats from '../components/ai/UsageStats.vue'
 import { useAiProviders } from '../ai/store'
 
 defineOptions({ name: 'AIWorkbenchView' })
 
-const active = ref<'providers' | 'image' | 'usage'>('providers')
+const active = ref<'providers' | 'agent' | 'image' | 'usage'>('providers')
 const { ensureLoaded } = useAiProviders()
 
 function onSelect(id: string): void {
-  active.value = id as 'providers' | 'image' | 'usage'
+  active.value = id as 'providers' | 'agent' | 'image' | 'usage'
 }
 
 onMounted(() => {
@@ -107,5 +113,10 @@ onMounted(() => {
   min-width: 0;
   overflow-y: auto;
   padding: 18px 20px;
+}
+
+.content-panel.flush {
+  padding: 0;
+  overflow: hidden;
 }
 </style>

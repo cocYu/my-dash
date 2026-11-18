@@ -6,6 +6,7 @@ import http from 'node:http'
 import path from 'node:path'
 import { attachmentsDir } from '../attachments'
 import { providersForBackup, writeProvidersFromBackup } from '../ai/config'
+import { agentsForBackup, writeAgentsFromBackup } from '../ai/agents'
 import { readHistory, writeHistory } from '../ai/history'
 import { readUsage, writeUsageFromBackup } from '../ai/usage'
 import { cloudDelete, cloudDownload, cloudList, cloudUpload } from './cloud'
@@ -117,6 +118,8 @@ async function createBackupZip(ctx: SyncContext): Promise<{ file: string; size: 
     zip.addFile('ai/image-history.json', Buffer.from(JSON.stringify(readHistory(), null, 2), 'utf-8'))
     // AI 调用用量记录（token 消耗统计）
     zip.addFile('ai/usage.json', Buffer.from(JSON.stringify(readUsage(), null, 2), 'utf-8'))
+    // 自定义 AI 助手配置（不含会话内容：会话体积大且设备相关）
+    zip.addFile('ai/agents.json', Buffer.from(JSON.stringify(agentsForBackup(), null, 2), 'utf-8'))
     zip.addFile(
       'manifest.json',
       Buffer.from(
@@ -267,6 +270,17 @@ export async function restoreFromRecord(ctx: SyncContext, remoteFile: string): P
         if (Array.isArray(parsed)) writeUsageFromBackup(parsed)
       } catch (err) {
         console.error('[sync] AI 用量记录还原失败，保留现有统计:', err)
+      }
+    }
+
+    // 3f. 自定义 AI 助手配置（旧备份无此文件时跳过，保留本机助手）
+    const agentsEntry = zip.getEntry('ai/agents.json')
+    if (agentsEntry) {
+      try {
+        const parsed = JSON.parse(agentsEntry.getData().toString('utf-8'))
+        if (Array.isArray(parsed)) writeAgentsFromBackup(parsed)
+      } catch (err) {
+        console.error('[sync] AI 助手配置还原失败，保留现有助手:', err)
       }
     }
 

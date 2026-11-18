@@ -39,6 +39,9 @@ func New(folderHandler *api.FolderHandler, noteHandler *api.NoteHandler, version
 		apiGroup.PUT("/notes/:id", noteHandler.Update)
 		apiGroup.DELETE("/notes/:id", noteHandler.Delete)
 
+		// 全文检索（标题 + 正文，供 Agent 工具使用）
+		apiGroup.GET("/search/notes", noteHandler.Search)
+
 		// 笔记版本
 		apiGroup.GET("/notes/:id/versions", versionHandler.List)
 		apiGroup.POST("/notes/:id/versions", versionHandler.Create)

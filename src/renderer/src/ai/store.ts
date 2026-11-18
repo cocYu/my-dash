@@ -2,6 +2,7 @@
 // 两个面板（供应商管理 / AI 生图）共用同一份列表，避免各拉各的。
 import { ref } from 'vue'
 import type { AiModel, AiProvider } from '../../../types/ai'
+import { toPlain } from './plain'
 
 const providers = ref<AiProvider[]>([])
 const loading = ref(false)
@@ -37,8 +38,7 @@ async function ensureLoaded(): Promise<void> {
  * Electron IPC 用结构化克隆无法传输 Proxy，必须先在边界转成纯 JSON 对象。
  */
 async function save(list: AiProvider[]): Promise<AiProvider[]> {
-  const plain = JSON.parse(JSON.stringify(list)) as AiProvider[]
-  const next = await aiApi().providers.save(plain)
+  const next = await aiApi().providers.save(toPlain(list))
   providers.value = next
   return next
 }

@@ -1,5 +1,15 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type {
+  AiAgent,
+  AiSessionMessage,
+  AiSessionMeta,
+  AiSessionPatch,
+  AiStreamEventPayload,
+  AiStreamRequest,
+  AiStreamResult,
+  AiToolInfo
+} from '../types/agent'
+import type {
   AiChatRequest,
   AiChatResponse,
   AiHistoryImage,
@@ -33,6 +43,21 @@ export type {
   AiUsageSummary,
   AiVendorPreset
 } from '../types/ai'
+
+export type {
+  AiAgent,
+  AiReasoningEffort,
+  AiSessionMessage,
+  AiSessionMeta,
+  AiSessionPatch,
+  AiStreamEvent,
+  AiStreamEventPayload,
+  AiStreamRequest,
+  AiStreamResult,
+  AiToolInfo,
+  AiToolLevel,
+  AiToolStep
+} from '../types/agent'
 export { AI_PRESETS } from '../types/ai'
 
 export interface PluginInfo {
@@ -154,6 +179,10 @@ const api = {
     setLoginItem: (open: boolean): Promise<void> =>
       ipcRenderer.invoke('settings:set-login-item', open)
   },
+  /** 系统交互：仅允许 http/https 外链交给默认浏览器 */
+  shell: {
+    openExternal: (url: string): Promise<boolean> => ipcRenderer.invoke('shell:open-external', url)
+  },
   /** AI 工作台：供应商配置 / 统一网关 / 生图 / 历史 / 提示词增强 */
   ai: {
     providers: {
@@ -178,7 +207,39 @@ const api = {
     /** 某供应商最近一次调用时间 ISO，无记录返回 null */
     lastCall: (id: string): Promise<string | null> => ipcRenderer.invoke('ai:last-call', id),
     /** 按日期 / 日期范围查询 token 消耗 */
-    usage: (query: AiUsageQuery): Promise<AiUsageSummary> => ipcRenderer.invoke('ai:usage', query)
+    usage: (query: AiUsageQuery): Promise<AiUsageSummary> => ipcRenderer.invoke('ai:usage', query),
+
+    // ---- 自定义 Agent ----
+    agents: {
+      list: (): Promise<AiAgent[]> => ipcRenderer.invoke('ai:agents:list'),
+      save: (agent: AiAgent): Promise<AiAgent[]> => ipcRenderer.invoke('ai:agents:save', agent),
+      remove: (id: string): Promise<AiAgent[]> => ipcRenderer.invoke('ai:agents:remove', id)
+    },
+    /** 工具目录 + 新建助手默认启用的只读工具 */
+    tools: {
+      list: (): Promise<{ tools: AiToolInfo[]; defaults: string[] }> =>
+        ipcRenderer.invoke('ai:tools:list')
+    },
+    sessions: {
+      list: (agentId?: string): Promise<AiSessionMeta[]> => ipcRenderer.invoke('ai:sessions:list', agentId),
+      create: (agentId: string): Promise<AiSessionMeta> => ipcRenderer.invoke('ai:sessions:create', agentId),
+      delete: (id: string): Promise<boolean> => ipcRenderer.invoke('ai:sessions:delete', id),
+      rename: (id: string, title: string): Promise<AiSessionMeta[]> =>
+        ipcRenderer.invoke('ai:sessions:rename', id, title),
+      /** 更新会话级设置（模型 / 思考强度覆盖）与上下文摘要 */
+      update: (id: string, patch: AiSessionPatch): Promise<AiSessionMeta | null> =>
+        ipcRenderer.invoke('ai:sessions:update', id, patch),
+      messages: (id: string): Promise<AiSessionMessage[]> => ipcRenderer.invoke('ai:sessions:messages', id)
+    },
+    /** 发起流式对话；文本增量经 onStreamEvent 推送 */
+    streamChat: (req: AiStreamRequest): Promise<AiStreamResult> => ipcRenderer.invoke('ai:chat:stream', req),
+    abortStream: (requestId: string): Promise<boolean> => ipcRenderer.invoke('ai:chat:abort', requestId),
+    /** 订阅流事件，返回取消订阅函数 */
+    onStreamEvent: (cb: (payload: AiStreamEventPayload) => void): (() => void) => {
+      const listener = (_e: unknown, payload: AiStreamEventPayload): void => cb(payload)
+      ipcRenderer.on('ai:stream:event', listener)
+      return () => ipcRenderer.removeListener('ai:stream:event', listener)
+    }
   },
   exporter: {
     /** 文本类导出（Markdown / HTML）：弹保存对话框并写文件 */

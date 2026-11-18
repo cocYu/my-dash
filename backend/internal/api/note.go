@@ -6,7 +6,9 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/gin-gonic/gin"
 )
@@ -50,6 +52,79 @@ func (h *NoteHandler) List(c *gin.Context) {
 		list = append(list, n)
 	}
 	respondOK(c, http.StatusOK, list)
+}
+
+// NoteSearchHit 搜索结果：元数据 + 命中片段（正文命中时才有）
+type NoteSearchHit struct {
+	NoteMeta
+	Snippet string `json:"snippet"`
+}
+
+// snippetAround 在 content 中定位 q，取前后 radius 个字符作为片段（按 rune 切，避免截断中文）。
+func snippetAround(content, q string, radius int) string {
+	idx := strings.Index(strings.ToLower(content), strings.ToLower(q))
+	if idx < 0 {
+		return ""
+	}
+	runes := []rune(content)
+	ridx := utf8.RuneCountInString(content[:idx])
+	start := ridx - radius
+	if start < 0 {
+		start = 0
+	}
+	end := ridx + utf8.RuneCountInString(q) + radius
+	if end > len(runes) {
+		end = len(runes)
+	}
+	s := strings.ReplaceAll(string(runes[start:end]), "\n", " ")
+	if start > 0 {
+		s = "…" + s
+	}
+	if end < len(runes) {
+		s += "…"
+	}
+	return s
+}
+
+// Search GET /api/search/notes?q=&limit= —— 标题或正文子串匹配，按更新时间倒序。
+// 供 Agent 工具与后续全文检索使用；标题命中排在正文命中之前。
+func (h *NoteHandler) Search(c *gin.Context) {
+	q := strings.TrimSpace(c.Query("q"))
+	if q == "" {
+		respondOK(c, http.StatusOK, []NoteSearchHit{})
+		return
+	}
+	limit, _ := strconv.Atoi(c.Query("limit"))
+	if limit <= 0 || limit > 50 {
+		limit = 20
+	}
+
+	rows, err := h.db.Query(
+		`SELECT id, folder_id, title, sort, created_at, updated_at, content
+		   FROM notes
+		  WHERE instr(lower(title), lower(?)) > 0 OR instr(lower(content), lower(?)) > 0
+		  ORDER BY updated_at DESC
+		  LIMIT ?`,
+		q, q, limit,
+	)
+	if err != nil {
+		respondError(c, http.StatusInternalServerError, 500, "搜索笔记失败")
+		return
+	}
+	defer rows.Close()
+
+	hits := make([]NoteSearchHit, 0)
+	for rows.Next() {
+		var hit NoteSearchHit
+		var content string
+		if err := rows.Scan(&hit.ID, &hit.FolderID, &hit.Title, &hit.Sort, &hit.CreatedAt, &hit.UpdatedAt, &content); err != nil {
+			respondError(c, http.StatusInternalServerError, 500, "读取搜索结果失败")
+			return
+		}
+		hit.Snippet = snippetAround(content, q, 60)
+		hits = append(hits, hit)
+	}
+	respondOK(c, http.StatusOK, hits)
 }
 
 // Get GET /api/notes/:id

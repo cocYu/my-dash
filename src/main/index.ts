@@ -1,4 +1,4 @@
-import { BrowserWindow, app, dialog, ipcMain } from 'electron'
+import { BrowserWindow, app, dialog, ipcMain, shell } from 'electron'
 import { randomBytes } from 'node:crypto'
 import net from 'node:net'
 import path from 'node:path'
@@ -100,6 +100,13 @@ async function bootstrap(): Promise<void> {
     updateTrayMenu(() => mainWindow)
   })
 
+  // Markdown 渲染结果里的外链：只放行 http/https，交系统浏览器打开，绝不在应用内导航
+  ipcMain.handle('shell:open-external', async (_e, url: string) => {
+    if (typeof url !== 'string' || !/^https?:\/\//i.test(url)) return false
+    await shell.openExternal(url)
+    return true
+  })
+
   // 数据同步
   const syncContext: SyncContext = { baseUrl: backendBaseUrl, token, dbPath }
   ipcMain.handle('sync:get-config', () => readConfig())
@@ -128,7 +135,8 @@ async function bootstrap(): Promise<void> {
   registerAttachmentsIpc({ baseUrl: backendBaseUrl, token })
   registerAttachmentsProtocol()
   // AI 工作台（供应商配置加密落盘，网关层兼容 chat/responses/messages）
-  registerAiIpc()
+  // 工具层需要直连本机后端，传入 baseUrl 与访问令牌
+  registerAiIpc({ baseUrl: backendBaseUrl, token })
 
   createWindow()
   createAppMenu(() => mainWindow)
@@ -178,6 +186,20 @@ function createWindow(): void {
   mainWindow.on('hide', () => updateTrayMenu(() => mainWindow))
   mainWindow.on('closed', () => {
     mainWindow = null
+  })
+
+  // 兜底：任何试图在应用内打开的外链都转到系统浏览器，避免整页被导航走
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    if (/^https?:\/\//i.test(url)) void shell.openExternal(url)
+    return { action: 'deny' }
+  })
+  mainWindow.webContents.on('will-navigate', (e, url) => {
+    const devUrl = process.env['ELECTRON_RENDERER_URL'] ?? ''
+    if (devUrl && url.startsWith(devUrl)) return
+    if (/^https?:\/\//i.test(url)) {
+      e.preventDefault()
+      void shell.openExternal(url)
+    }
   })
 
   if (!app.isPackaged && process.env['ELECTRON_RENDERER_URL']) {
