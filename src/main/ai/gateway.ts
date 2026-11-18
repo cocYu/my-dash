@@ -4,6 +4,7 @@
 //   responses → OpenAI Responses API      POST /v1/responses
 //   messages  → Anthropic Messages API    POST /v1/messages
 import type { AiChatMessage, AiChatRequest, AiChatResponse, AiModel, AiProvider, AiProtocol } from '../../types/ai'
+import { appendUsage } from './usage'
 
 const DEFAULT_TIMEOUT = 120_000
 
@@ -170,7 +171,24 @@ export async function chatOnce(provider: AiProvider, req: AiChatRequest): Promis
     signal: AbortSignal.timeout(DEFAULT_TIMEOUT)
   })
   const body = await readJson(res)
-  return parseChatResponse(body, provider.protocol)
+  const parsed = parseChatResponse(body, provider.protocol)
+  // 用量记录失败不影响调用结果
+  try {
+    appendUsage({
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      providerId: provider.id,
+      providerName: provider.name,
+      model: req.model,
+      kind: 'chat',
+      promptTokens: parsed.usage?.promptTokens ?? 0,
+      completionTokens: parsed.usage?.completionTokens ?? 0,
+      totalTokens: parsed.usage?.totalTokens ?? 0,
+      at: new Date().toISOString()
+    })
+  } catch (err) {
+    console.error('[ai] 记录用量失败:', err)
+  }
+  return parsed
 }
 
 /** 拉取供应商可用模型，归一化字段（兼容 OpenAI / Anthropic / 常见网关） */

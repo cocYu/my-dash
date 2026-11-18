@@ -27,6 +27,8 @@ export interface AiProvider {
   enabled: boolean
   /** 拉取到的模型缓存 */
   models: AiModel[]
+  /** 用户在拉取结果中勾选的展示模型 ID；为空表示全部展示 */
+  visibleModelIds?: string[]
   modelsFetchedAt?: string
   createdAt: string
   /** 渲染层视图标记：服务端已有密钥，输入框留空即保留 */
@@ -128,3 +130,73 @@ export const AI_PRESETS: AiPreset[] = [
   { id: 'openrouter', name: 'OpenRouter', baseUrl: 'https://openrouter.ai/api', protocol: 'chat' },
   { id: 'custom', name: '自定义', baseUrl: '', protocol: 'chat', note: '任意兼容上述协议的网关' }
 ]
+
+// ---- 用量统计 / 额度 ----
+
+/** 一次 LLM / 生图调用的用量记录 */
+export interface AiUsageRecord {
+  id: string
+  providerId: string
+  providerName: string
+  model: string
+  kind: 'chat' | 'image'
+  promptTokens: number
+  completionTokens: number
+  totalTokens: number
+  /** ISO 时间，用于按日期聚合 */
+  at: string
+}
+
+/** 用量查询条件（均为 YYYY-MM-DD，本地日期） */
+export interface AiUsageQuery {
+  date?: string
+  from?: string
+  to?: string
+}
+
+/** 某日（或整个查询区间）聚合结果 */
+export interface AiUsageDay {
+  date: string
+  chatCalls: number
+  imageCalls: number
+  promptTokens: number
+  completionTokens: number
+  totalTokens: number
+  byProvider: {
+    providerId: string
+    providerName: string
+    calls: number
+    promptTokens: number
+    completionTokens: number
+    totalTokens: number
+  }[]
+}
+
+/** 用量查询结果 */
+export interface AiUsageSummary {
+  records: AiUsageRecord[]
+  days: AiUsageDay[]
+  total: {
+    chatCalls: number
+    imageCalls: number
+    promptTokens: number
+    completionTokens: number
+    totalTokens: number
+  }
+}
+
+/** 供应商额度信息（探测成功时返回） */
+export interface AiQuotaInfo {
+  /** 额度上限（美元/账户货币单位），未知时为 null */
+  limit: number | null
+  /** 已用额度（美元/账户货币单位），未知时为 null */
+  used: number | null
+  /** 剩余额度 */
+  remaining: number | null
+  /** 货币标识，如 USD / CNY */
+  currency: string
+  /** 探测来源，便于用户判断可信度 */
+  source: string
+  /** 探测时间 ISO */
+  checkedAt: string
+}

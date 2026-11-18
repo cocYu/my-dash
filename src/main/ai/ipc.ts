@@ -1,10 +1,12 @@
 // AI 工作台 IPC：供应商 CRUD / 拉取模型 / 统一对话 / 生图 / 生图历史 / 提示词增强。
 import { ipcMain } from 'electron'
-import type { AiChatRequest, AiImageHistoryItem, AiImageRequest, AiPromptEnhanceRequest, AiProvider } from '../../types/ai'
+import type { AiChatRequest, AiImageHistoryItem, AiImageRequest, AiPromptEnhanceRequest, AiProvider, AiUsageQuery } from '../../types/ai'
 import { providersForRenderer, readProviders, saveProvidersFromRenderer, writeProviders } from './config'
 import { chatOnce, fetchModels, testProvider } from './gateway'
 import { generateImage } from './image'
 import { appendHistory, clearHistory, deleteHistory, readHistory } from './history'
+import { appendUsage, lastCallAt, queryUsage } from './usage'
+import { fetchQuota } from './quota'
 
 function findProvider(id: string): AiProvider {
   const p = readProviders().find((x) => x.id === id)
@@ -63,6 +65,21 @@ export function registerAiIpc(): void {
     if (!req.prompt?.trim()) throw new Error('请输入提示词')
     const provider = findProvider(req.providerId)
     const results = await generateImage(provider, req)
+    try {
+      appendUsage({
+        id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        providerId: provider.id,
+        providerName: provider.name,
+        model: req.model,
+        kind: 'image',
+        promptTokens: 0,
+        completionTokens: 0,
+        totalTokens: 0,
+        at: new Date().toISOString()
+      })
+    } catch (err) {
+      console.error('[ai] 记录生图用量失败:', err)
+    }
     // 写历史只存元数据，图片本体已在附件库；历史写入失败不应让生图主流程报错
     const item: AiImageHistoryItem = {
       id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
@@ -90,6 +107,14 @@ export function registerAiIpc(): void {
     clearHistory()
     return readHistory()
   })
+
+  ipcMain.handle('ai:quota', async (_e, id: string) => fetchQuota(findProvider(id)))
+
+  ipcMain.handle('ai:last-call', (_e, id: string) => lastCallAt(id))
+
+  ipcMain.handle('ai:usage', (_e, query: AiUsageQuery) =>
+    queryUsage(query && typeof query === 'object' ? query : {})
+  )
 
   ipcMain.handle('ai:prompt:enhance', async (_e, req: AiPromptEnhanceRequest) => {
     if (!req.providerId) throw new Error('请选择用于提示词增强的供应商')

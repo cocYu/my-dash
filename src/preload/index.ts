@@ -8,7 +8,10 @@ import type {
   AiImageResult,
   AiModel,
   AiPromptEnhanceRequest,
-  AiProvider
+  AiProvider,
+  AiQuotaInfo,
+  AiUsageQuery,
+  AiUsageSummary
 } from '../types/ai'
 
 export type {
@@ -24,6 +27,10 @@ export type {
   AiPromptEnhanceRequest,
   AiProtocol,
   AiProvider,
+  AiQuotaInfo,
+  AiUsageQuery,
+  AiUsageRecord,
+  AiUsageSummary,
   AiVendorPreset
 } from '../types/ai'
 export { AI_PRESETS } from '../types/ai'
@@ -93,6 +100,9 @@ const api = {
     pickImage: (): Promise<{ name: string }[] | null> => ipcRenderer.invoke('attachments:pick-image'),
     /** 读取附件为 data URI（导出内嵌用） */
     readDataUrl: (name: string): Promise<string> => ipcRenderer.invoke('attachments:read-data-url', name),
+    /** 复制附件图片到系统剪贴板 */
+    copyImage: (name: string): Promise<{ ok: boolean; message?: string }> =>
+      ipcRenderer.invoke('attachments:copy-image', name),
     stats: (): Promise<{ count: number; bytes: number }> => ipcRenderer.invoke('attachments:stats'),
     openDir: (): Promise<void> => ipcRenderer.invoke('attachments:open-dir'),
     /** 清理未被任何笔记/版本引用的附件 */
@@ -162,7 +172,13 @@ const api = {
     },
     /** 用指定供应商模型优化提示词，返回增强后的纯文本 */
     enhancePrompt: (req: AiPromptEnhanceRequest): Promise<string> =>
-      ipcRenderer.invoke('ai:prompt:enhance', req)
+      ipcRenderer.invoke('ai:prompt:enhance', req),
+    /** 查询供应商额度（OpenAI Billing / new-api 兼容） */
+    quota: (id: string): Promise<AiQuotaInfo> => ipcRenderer.invoke('ai:quota', id),
+    /** 某供应商最近一次调用时间 ISO，无记录返回 null */
+    lastCall: (id: string): Promise<string | null> => ipcRenderer.invoke('ai:last-call', id),
+    /** 按日期 / 日期范围查询 token 消耗 */
+    usage: (query: AiUsageQuery): Promise<AiUsageSummary> => ipcRenderer.invoke('ai:usage', query)
   },
   exporter: {
     /** 文本类导出（Markdown / HTML）：弹保存对话框并写文件 */

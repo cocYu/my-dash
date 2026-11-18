@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/gin-gonic/gin"
 )
@@ -328,28 +329,147 @@ func (h *NoteHandler) titleExists(title string, parentID *int64, excludeID int64
 	return h.db.QueryRow(q, args...).Scan(&one) == nil
 }
 
-// autoVersion 将旧内容存为自动版本：与最新版本内容相同则跳过；每篇自动版本上限 50。
+// 版本策略：保存可以频繁，但只有跨过时间阈值的编辑才产生新版本。
+const (
+	// autoVersionGap 距上一条自动版本不足该间隔的编辑并入同一版本（一次编辑会话只留一个检查点）
+	autoVersionGap = 5 * time.Minute
+	// versionRetention 自动版本最长保留时长，更早的自动版本回收
+	versionRetention = 30 * 24 * time.Hour
+	// versionHardLimit 每篇自动版本数量硬上限（分层保留之外的兜底）
+	versionHardLimit = 120
+)
+
+// autoVersion 将旧内容存为自动版本：
+//  1. 内容与最新版本相同则跳过；
+//  2. 距上一条自动版本不足 autoVersionGap 时跳过——同一次编辑会话只留一个检查点；
+//  3. 存入后按分层策略修剪（pruneVersions），手动快照永不删除。
 func (h *NoteHandler) autoVersion(noteID int64, prevContent string) {
-	var latest string
+	var latestContent, latestAt string
+	var latestAuto int
 	err := h.db.QueryRow(
-		"SELECT content FROM note_versions WHERE note_id = ? ORDER BY id DESC LIMIT 1", noteID,
-	).Scan(&latest)
-	if err == nil && latest == prevContent {
-		return // 内容与最近一版相同，不重复存
+		"SELECT content, created_at, auto FROM note_versions WHERE note_id = ? ORDER BY id DESC LIMIT 1",
+		noteID,
+	).Scan(&latestContent, &latestAt, &latestAuto)
+	if err == nil {
+		// 内容与最近一版相同，不重复存
+		if latestContent == prevContent {
+			return
+		}
+		// 会话合并：上一条是自动版本且仍在间隔内，本次编辑并入该检查点
+		if latestAuto == 1 {
+			if t, e := time.Parse(time.RFC3339, latestAt); e == nil && time.Since(t) < autoVersionGap {
+				return
+			}
+		}
 	}
-	now := nowRFC()
+
 	if _, err := h.db.Exec(
 		"INSERT INTO note_versions (note_id, label, auto, content, created_at) VALUES (?, '', 1, ?, ?)",
-		noteID, prevContent, now,
+		noteID, prevContent, nowRFC(),
 	); err != nil {
 		return
 	}
-	// 修剪超出上限的自动版本
-	_, _ = h.db.Exec(
-		`DELETE FROM note_versions WHERE note_id = ? AND auto = 1 AND id NOT IN (
-			SELECT id FROM note_versions WHERE note_id = ? AND auto = 1 ORDER BY id DESC LIMIT 50
-		)`, noteID, noteID,
-	)
+	h.pruneVersions(noteID)
+}
+
+// pruneVersions 分层保留自动版本（越老越稀疏），手动版本永久保留：
+//
+//	2 小时内    → 全留
+//	2~24 小时   → 每 30 分钟 1 条
+//	1~7 天      → 每 2 小时 1 条
+//	7~30 天     → 每天 1 条
+//	超过 30 天  → 删除
+//
+// 每篇自动版本另有 versionHardLimit 兜底。
+func (h *NoteHandler) pruneVersions(noteID int64) {
+	rows, err := h.db.Query("SELECT id, auto, created_at FROM note_versions WHERE note_id = ? ORDER BY id DESC", noteID)
+	if err != nil {
+		return
+	}
+	type versionRow struct {
+		id      int64
+		auto    bool
+		created time.Time
+	}
+	list := make([]versionRow, 0, 64)
+	for rows.Next() {
+		var r versionRow
+		var auto int
+		var at string
+		if rows.Scan(&r.id, &auto, &at) != nil {
+			continue
+		}
+		r.auto = auto == 1
+		t, e := time.Parse(time.RFC3339, at)
+		if e != nil {
+			continue // 时间不可解析的记录不参与裁剪，保持原样
+		}
+		r.created = t
+		list = append(list, r)
+	}
+	rows.Close()
+
+	now := time.Now()
+	buckets := make(map[string]bool, len(list))
+	keep := make(map[int64]bool, len(list))
+	autoKept := 0
+	// list 按 id 倒序（新→旧）：每个时间桶保留遇到的第一条，即该桶最新的一条
+	for _, r := range list {
+		if !r.auto {
+			keep[r.id] = true // 手动快照永久保留
+			continue
+		}
+		age := now.Sub(r.created)
+		if age > versionRetention {
+			continue // 超期，删除
+		}
+		if autoKept >= versionHardLimit {
+			continue // 超出硬上限，删除较老的
+		}
+		var bucket string
+		switch {
+		case age <= 2*time.Hour:
+			bucket = "raw:" + strconv.FormatInt(r.id, 10) // 全留：每条独立成桶
+		case age <= 24*time.Hour:
+			bucket = "30m:" + r.created.UTC().Truncate(30*time.Minute).Format("200601021504")
+		case age <= 7*24*time.Hour:
+			bucket = "2h:" + r.created.UTC().Truncate(2*time.Hour).Format("2006010215")
+		default:
+			bucket = "1d:" + r.created.UTC().Format("20060102")
+		}
+		if buckets[bucket] {
+			continue
+		}
+		buckets[bucket] = true
+		keep[r.id] = true
+		autoKept++
+	}
+
+	var stale []int64
+	for _, r := range list {
+		if !keep[r.id] {
+			stale = append(stale, r.id)
+		}
+	}
+	if len(stale) == 0 {
+		return
+	}
+	tx, err := h.db.Begin()
+	if err != nil {
+		return
+	}
+	defer tx.Rollback()
+	stmt, err := tx.Prepare("DELETE FROM note_versions WHERE id = ?")
+	if err != nil {
+		return
+	}
+	defer stmt.Close()
+	for _, id := range stale {
+		if _, err := stmt.Exec(id); err != nil {
+			return
+		}
+	}
+	_ = tx.Commit()
 }
 
 // isDescendantFolder 判断 folderID 是否位于 maybeAncestor 的子树内（用于移动防环）。

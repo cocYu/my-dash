@@ -19,6 +19,10 @@
             <el-icon><Picture /></el-icon>
             <span>AI 生图</span>
           </el-menu-item>
+          <el-menu-item index="usage">
+            <el-icon><DataAnalysis /></el-icon>
+            <span>用量统计</span>
+          </el-menu-item>
         </el-menu>
       </div>
 
@@ -26,6 +30,7 @@
       <div class="glass content-panel">
         <ProviderManager v-show="active === 'providers'" />
         <ImageGen v-show="active === 'image'" />
+        <UsageStats v-show="active === 'usage'" />
       </div>
     </div>
   </div>
@@ -33,18 +38,19 @@
 
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
-import { Connection, Picture } from '@element-plus/icons-vue'
+import { Connection, DataAnalysis, Picture } from '@element-plus/icons-vue'
 import ProviderManager from '../components/ai/ProviderManager.vue'
 import ImageGen from '../components/ai/ImageGen.vue'
+import UsageStats from '../components/ai/UsageStats.vue'
 import { useAiProviders } from '../ai/store'
 
 defineOptions({ name: 'AIWorkbenchView' })
 
-const active = ref<'providers' | 'image'>('providers')
+const active = ref<'providers' | 'image' | 'usage'>('providers')
 const { ensureLoaded } = useAiProviders()
 
 function onSelect(id: string): void {
-  active.value = id as 'providers' | 'image'
+  active.value = id as 'providers' | 'image' | 'usage'
 }
 
 onMounted(() => {

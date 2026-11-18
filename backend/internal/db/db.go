@@ -154,5 +154,28 @@ func Migrate(d *sql.DB) error {
 			return fmt.Errorf("set user_version: %w", err)
 		}
 	}
+	if version < 4 {
+		// v4：版本策略收紧。旧逻辑每次保存都建版本，单篇 50 条上限里几乎全是几分钟内的
+		// 重复快照。这里清理 30 天前的自动版本，并把存量自动版本按篇压到最近 10 条；
+		// 手动快照（auto = 0）不动。后续分层保留由每次保存时的 pruneVersions 接管。
+		stmts := []string{
+			`DELETE FROM note_versions WHERE auto = 1 AND datetime(created_at) < datetime('now', '-30 day')`,
+			`DELETE FROM note_versions
+			 WHERE auto = 1 AND id NOT IN (
+				SELECT id FROM note_versions a
+				WHERE a.auto = 1
+				  AND (SELECT COUNT(*) FROM note_versions b
+				       WHERE b.note_id = a.note_id AND b.auto = 1 AND b.id >= a.id) <= 10
+			 )`,
+		}
+		for _, s := range stmts {
+			if _, err := d.Exec(s); err != nil {
+				return fmt.Errorf("migrate v4: %w", err)
+			}
+		}
+		if _, err := d.Exec("PRAGMA user_version = 4"); err != nil {
+			return fmt.Errorf("set user_version: %w", err)
+		}
+	}
 	return nil
 }

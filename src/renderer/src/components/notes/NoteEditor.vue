@@ -836,7 +836,12 @@ watch(
 )
 
 // ---- 自动保存 ----
+// 防抖避免每次按键都请求；maxWait 保证持续输入时也定期落盘，崩溃最多丢 5 秒内容。
+// 版本由后端按「编辑会话 + 分层保留」策略生成，落盘频率与版本数量已解耦。
+const SAVE_DEBOUNCE = 800
+const SAVE_MAX_WAIT = 5000
 let saveTimer: ReturnType<typeof setTimeout> | null = null
+let dirtySince = 0
 
 function markDirty(): void {
   if (!props.note) return
@@ -844,8 +849,16 @@ function markDirty(): void {
 }
 
 function scheduleSave(): void {
+  if (!dirtySince) dirtySince = Date.now()
   if (saveTimer) clearTimeout(saveTimer)
-  saveTimer = setTimeout(() => void saveNow(), 800)
+  // 本轮首次变脏后最多等 maxWait；剩余时间不足防抖窗口时提前落盘
+  const remain = SAVE_MAX_WAIT - (Date.now() - dirtySince)
+  const delay = Math.max(0, Math.min(SAVE_DEBOUNCE, remain))
+  saveTimer = setTimeout(() => {
+    saveTimer = null
+    dirtySince = 0
+    void saveNow()
+  }, delay)
 }
 
 async function saveNow(targetId?: number): Promise<void> {
@@ -855,6 +868,7 @@ async function saveNow(targetId?: number): Promise<void> {
     clearTimeout(saveTimer)
     saveTimer = null
   }
+  dirtySince = 0
   saveState.value = 'saving'
   try {
     const saved = await updateNote(id, {

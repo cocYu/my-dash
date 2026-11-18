@@ -7,6 +7,7 @@ import path from 'node:path'
 import { attachmentsDir } from '../attachments'
 import { providersForBackup, writeProvidersFromBackup } from '../ai/config'
 import { readHistory, writeHistory } from '../ai/history'
+import { readUsage, writeUsageFromBackup } from '../ai/usage'
 import { cloudDelete, cloudDownload, cloudList, cloudUpload } from './cloud'
 import { readConfig, syncDir, writeConfig, type SyncConfig } from './config'
 import { getLastStartOptions, startBackend, stopBackend } from '../backend'
@@ -114,6 +115,8 @@ async function createBackupZip(ctx: SyncContext): Promise<{ file: string; size: 
     zip.addFile('ai/providers.json', Buffer.from(JSON.stringify(providersForBackup(), null, 2), 'utf-8'))
     // 生图历史元数据（图片本体在 attachments/ 中一同打包）
     zip.addFile('ai/image-history.json', Buffer.from(JSON.stringify(readHistory(), null, 2), 'utf-8'))
+    // AI 调用用量记录（token 消耗统计）
+    zip.addFile('ai/usage.json', Buffer.from(JSON.stringify(readUsage(), null, 2), 'utf-8'))
     zip.addFile(
       'manifest.json',
       Buffer.from(
@@ -198,7 +201,7 @@ export async function restoreFromRecord(ctx: SyncContext, remoteFile: string): P
   try {
     await cloudDownload(cfg, remoteFile, tmpZip)
     const zip = new AdmZip(tmpZip)
-    if (!zip.getEntry('manifest.json')) throw new Error('备份包缺少 manifest.json，不是有效的 myDash 备份')
+    if (!zip.getEntry('manifest.json')) throw new Error('备份包缺少 manifest.json，不是有效的 AtoZ 备份')
     const dbEntry = zip.getEntry('data/mydash.db')
     if (!dbEntry) throw new Error('备份包缺少数据库文件')
 
@@ -253,6 +256,17 @@ export async function restoreFromRecord(ctx: SyncContext, remoteFile: string): P
         if (Array.isArray(parsed)) writeHistory(parsed)
       } catch (err) {
         console.error('[sync] AI 生图历史还原失败，保留现有历史:', err)
+      }
+    }
+
+    // 3e. AI 用量记录（旧备份无此文件时跳过，保留本机统计）
+    const usageEntry = zip.getEntry('ai/usage.json')
+    if (usageEntry) {
+      try {
+        const parsed = JSON.parse(usageEntry.getData().toString('utf-8'))
+        if (Array.isArray(parsed)) writeUsageFromBackup(parsed)
+      } catch (err) {
+        console.error('[sync] AI 用量记录还原失败，保留现有统计:', err)
       }
     }
 

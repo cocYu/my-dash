@@ -1,8 +1,9 @@
 // 笔记图片附件：内容寻址存储（sha1 前 16 位十六进制命名）+ attach:// 特权协议 + IPC。
 // 同一图片无论粘贴/拖拽到哪篇笔记都只存一份；版本还原时引用同一文件，历史图片不会丢失。
-import { app, dialog, ipcMain, protocol, shell } from 'electron'
+import { app, clipboard, ClipboardItem, dialog, ipcMain, protocol, shell } from 'electron'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
+import { Blob } from 'node:buffer'
 import { createHash } from 'node:crypto'
 import { readHistory } from './ai/history'
 
@@ -106,6 +107,24 @@ export function registerAttachmentsIpc(ctx: { baseUrl: string; token: string }):
     const file = path.join(attachmentsDir(), name)
     if (!fs.existsSync(file)) return ''
     return `data:${mimeFromName(name)};base64,${fs.readFileSync(file).toString('base64')}`
+  })
+
+  // 复制附件图片到系统剪贴板。
+  // Electron 45 的 clipboard 改为 W3C 异步 API（write(ClipboardItem[])），旧的 writeImage 已移除。
+  // 渲染层 navigator.clipboard 对自定义协议图片支持不稳定，统一在这里读原文件写入。
+  ipcMain.handle('attachments:copy-image', async (_e, name: string): Promise<{ ok: boolean; message?: string }> => {
+    if (!isSafeAttachmentName(name)) return { ok: false, message: '无效的附件名' }
+    const file = path.join(attachmentsDir(), name)
+    if (!fs.existsSync(file)) return { ok: false, message: '图片不存在，可能已被清理' }
+    const mime = mimeFromName(name)
+    if (!mime.startsWith('image/')) return { ok: false, message: '不是图片文件' }
+    try {
+      const bytes = new Uint8Array(fs.readFileSync(file))
+      await clipboard.write([new ClipboardItem({ [mime]: new Blob([bytes], { type: mime }) })])
+      return { ok: true }
+    } catch (err) {
+      return { ok: false, message: err instanceof Error ? err.message : '写入剪贴板失败' }
+    }
   })
 
   // 用量统计 + 打开目录

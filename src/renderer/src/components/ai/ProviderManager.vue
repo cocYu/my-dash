@@ -40,30 +40,74 @@
           </div>
         </div>
 
-        <div class="pc-meta">
-          <span class="k">接口地址</span>
-          <span class="v mono">{{ p.baseUrl || '—' }}</span>
+        <div class="pc-info-grid">
+          <div class="pc-meta">
+            <span class="k">接口地址</span>
+            <span class="v mono">{{ p.baseUrl || '—' }}</span>
+          </div>
+          <div class="pc-meta">
+            <span class="k">API Key</span>
+            <span class="v">{{ p.hasApiKey ? '已配置（加密存储）' : '未配置' }}</span>
+          </div>
+          <div class="pc-meta">
+            <span class="k">最近调用</span>
+            <span class="v">{{ formatLastCall(lastCalls[p.id]) }}</span>
+          </div>
+          <div class="pc-meta quota-meta">
+            <span class="k">额度</span>
+            <span class="v">
+              <template v-if="quotaLoading[p.id]">
+                <span class="muted">查询中…</span>
+              </template>
+              <template v-else-if="quotas[p.id]">
+                <template v-if="quotas[p.id].limit !== null || quotas[p.id].used !== null">
+                  <span class="quota-strong">{{ formatMoney(quotas[p.id].remaining, quotas[p.id].currency) }}</span>
+                  <span class="quota-sub">
+                    / 上限 {{ formatMoney(quotas[p.id].limit, quotas[p.id].currency) }}
+                    · 已用 {{ formatMoney(quotas[p.id].used, quotas[p.id].currency) }}
+                  </span>
+                </template>
+                <span v-else class="muted">
+                  {{ quotas[p.id].currency === '未知' ? '仅探测到货币信息' : `货币 ${quotas[p.id].currency}` }}
+                </span>
+                <span class="quota-src" :title="quotas[p.id].source">{{ quotas[p.id].source }}</span>
+                <span class="quota-time">· {{ formatTime(quotas[p.id].checkedAt) }}</span>
+              </template>
+              <template v-else-if="quotaErrors[p.id]">
+                <span class="muted" :title="quotaErrors[p.id]">不支持额度查询</span>
+              </template>
+              <template v-else>
+                <span class="muted">未查询</span>
+              </template>
+              <el-button link size="small" class="quota-refresh" :loading="quotaLoading[p.id]" @click="refreshQuota(p)">
+                刷新
+              </el-button>
+            </span>
+          </div>
         </div>
-        <div class="pc-meta">
-          <span class="k">API Key</span>
-          <span class="v">{{ p.hasApiKey ? '已配置（加密存储）' : '未配置' }}</span>
-        </div>
-        <div class="pc-meta">
+
+        <div class="pc-meta model-row">
           <span class="k">可用模型</span>
           <span class="v">
-            <template v-if="p.models.length">
+            <template v-if="visibleModels(p).length">
               <el-tag
-                v-for="m in p.models.slice(0, 8)"
+                v-for="m in visibleModels(p).slice(0, 8)"
                 :key="m.id"
                 size="small"
                 effect="plain"
                 class="model-tag"
                 :title="m.id"
               >{{ m.name || m.id }}</el-tag>
-              <span v-if="p.models.length > 8" class="more">+{{ p.models.length - 8 }}</span>
+              <span v-if="visibleModels(p).length > 8" class="more">+{{ visibleModels(p).length - 8 }}</span>
+              <span v-if="p.visibleModelIds && p.visibleModelIds.length < p.models.length" class="filtered-note">
+                （已筛选 {{ p.visibleModelIds.length }}/{{ p.models.length }}，点「选择模型」调整）
+              </span>
               <span v-if="p.modelsFetchedAt" class="fetched-at">更新于 {{ formatTime(p.modelsFetchedAt) }}</span>
             </template>
             <span v-else class="muted">尚未拉取，点「拉取模型」获取</span>
+            <el-button v-if="p.models.length" link size="small" class="model-select-btn" @click="openModelPicker(p)">
+              选择模型
+            </el-button>
           </span>
         </div>
       </div>
@@ -103,14 +147,41 @@
         <el-button type="primary" :loading="saving" @click="doSave">保存</el-button>
       </template>
     </el-dialog>
+
+    <!-- 模型选择弹窗 -->
+    <el-dialog v-model="pickerOpen" :title="`选择展示模型 — ${pickerProvider?.name || ''}`" width="560px">
+      <div class="picker-toolbar">
+        <el-button size="small" @click="selectAllModels">全选</el-button>
+        <el-button size="small" @click="selectNoModels">清空</el-button>
+        <span class="picker-count">已选 {{ pickerSelected.length }} / {{ pickerProvider?.models.length || 0 }}</span>
+      </div>
+      <div class="picker-tip">勾选的模型会出现在「AI 生图」和提示词增强的模型下拉框中；不勾选表示全部展示。</div>
+      <el-checkbox-group v-model="pickerSelected" class="picker-list">
+        <el-checkbox v-for="m in pickerProvider?.models || []" :key="m.id" :value="m.id" class="picker-item">
+          <span class="picker-model">{{ m.name || m.id }}</span>
+          <span v-if="m.name && m.name !== m.id" class="picker-id mono">{{ m.id }}</span>
+        </el-checkbox>
+      </el-checkbox-group>
+      <template #footer>
+        <el-button @click="pickerOpen = false">取消</el-button>
+        <el-button type="primary" :loading="pickerSaving" @click="saveModelSelection">保存选择</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
-import { reactive, ref } from 'vue'
+import { onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { InfoFilled, Plus } from '@element-plus/icons-vue'
-import { AI_PRESETS, type AiModel, type AiProvider, type AiProtocol, type AiVendorPreset } from '../../../../types/ai'
+import type {
+  AiModel,
+  AiProvider,
+  AiProtocol,
+  AiQuotaInfo,
+  AiVendorPreset
+} from '../../../../types/ai'
+import { AI_PRESETS } from '../../../../types/ai'
 import { useAiProviders } from '../../ai/store'
 
 const { providers, loading, save, fetchModels, reload } = useAiProviders()
@@ -122,6 +193,20 @@ const saving = ref(false)
 const editorOpen = ref(false)
 const editing = ref<AiProvider | null>(null)
 
+/** 额度：5 分钟定时刷新，也支持手动 */
+const quotas = reactive<Record<string, AiQuotaInfo>>({})
+const quotaErrors = reactive<Record<string, string>>({})
+const quotaLoading = reactive<Record<string, boolean>>({})
+const lastCalls = reactive<Record<string, string | null>>({})
+let quotaTimer: ReturnType<typeof setInterval> | null = null
+const QUOTA_INTERVAL = 5 * 60 * 1000
+
+/** 模型选择 */
+const pickerOpen = ref(false)
+const pickerProvider = ref<AiProvider | null>(null)
+const pickerSelected = ref<string[]>([])
+const pickerSaving = ref(false)
+
 interface FormState {
   id: string
   name: string
@@ -132,6 +217,7 @@ interface FormState {
   enabled: boolean
   hasApiKey: boolean
   models: AiModel[]
+  visibleModelIds?: string[]
   createdAt: string
 }
 
@@ -145,7 +231,8 @@ function openEditor(p: AiProvider | null): void {
   if (p) {
     Object.assign(form.value, {
       id: p.id, name: p.name, preset: p.preset, protocol: p.protocol, baseUrl: p.baseUrl,
-      apiKey: '', enabled: p.enabled, hasApiKey: Boolean(p.hasApiKey), models: p.models, createdAt: p.createdAt
+      apiKey: '', enabled: p.enabled, hasApiKey: Boolean(p.hasApiKey), models: p.models,
+      visibleModelIds: p.visibleModelIds, createdAt: p.createdAt
     })
   } else {
     Object.assign(form.value, {
@@ -180,6 +267,7 @@ async function doSave(): Promise<void> {
       id: form.value.id, name: form.value.name.trim(), preset: form.value.preset, protocol: form.value.protocol,
       baseUrl: form.value.baseUrl.trim(), apiKey: form.value.apiKey, enabled: form.value.enabled,
       models: form.value.models, createdAt: form.value.createdAt,
+      ...(form.value.visibleModelIds ? { visibleModelIds: form.value.visibleModelIds } : {}),
       ...(form.value.hasApiKey ? { hasApiKey: true } : {})
     }
     const next = [...providers.value]
@@ -210,13 +298,100 @@ async function doFetchModels(p: AiProvider): Promise<void> {
   modelLoading[p.id] = true
   try {
     const models = await fetchModels(p.id)
-    ElMessage.success(`已拉取 ${models.length} 个模型`)
+    // 拉取成功后弹选择框，让用户勾选要展示的模型
+    pickerProvider.value = providers.value.find((x) => x.id === p.id) ?? p
+    const ids = pickerProvider.value?.visibleModelIds
+    pickerSelected.value = Array.isArray(ids) ? [...ids] : models.map((m) => m.id)
+    pickerOpen.value = true
+    ElMessage.success(`已拉取 ${models.length} 个模型，请勾选要展示的`)
   } catch (err) {
     ElMessage.error(err instanceof Error ? err.message : '拉取模型失败')
   } finally {
     modelLoading[p.id] = false
   }
 }
+
+function openModelPicker(p: AiProvider): void {
+  pickerProvider.value = p
+  const ids = p.visibleModelIds
+  pickerSelected.value = Array.isArray(ids) ? [...ids] : p.models.map((m) => m.id)
+  pickerOpen.value = true
+}
+
+function selectAllModels(): void {
+  pickerSelected.value = (pickerProvider.value?.models ?? []).map((m) => m.id)
+}
+
+function selectNoModels(): void {
+  pickerSelected.value = []
+}
+
+async function saveModelSelection(): Promise<void> {
+  const p = pickerProvider.value
+  if (!p) return
+  pickerSaving.value = true
+  try {
+    const next = providers.value.map((x) =>
+      x.id === p.id ? { ...x, visibleModelIds: [...pickerSelected.value] } : x
+    )
+    await save(next)
+    pickerOpen.value = false
+    ElMessage.success(`已保存：展示 ${pickerSelected.value.length} 个模型`)
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : '保存模型选择失败')
+  } finally {
+    pickerSaving.value = false
+  }
+}
+
+/** 按用户勾选过滤展示的模型；未配置 visibleModelIds 时全部展示 */
+function visibleModels(p: AiProvider): AiModel[] {
+  if (!Array.isArray(p.visibleModelIds)) return p.models
+  const ids = new Set(p.visibleModelIds)
+  return p.models.filter((m) => ids.has(m.id))
+}
+
+async function refreshQuota(p: AiProvider, silent = false): Promise<void> {
+  if (quotaLoading[p.id]) return
+  quotaLoading[p.id] = true
+  try {
+    quotas[p.id] = await window.api.ai.quota(p.id)
+    delete quotaErrors[p.id]
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : '额度查询失败'
+    quotaErrors[p.id] = msg
+    if (!silent) ElMessage.warning(msg)
+  } finally {
+    quotaLoading[p.id] = false
+  }
+}
+
+async function loadQuotasAndLastCalls(silent = true): Promise<void> {
+  for (const p of providers.value) {
+    if (!p.enabled) continue
+    try {
+      lastCalls[p.id] = await window.api.ai.lastCall(p.id)
+    } catch {
+      lastCalls[p.id] = null
+    }
+    void refreshQuota(p, silent)
+  }
+}
+
+onMounted(() => {
+  void loadQuotasAndLastCalls()
+  quotaTimer = setInterval(() => void loadQuotasAndLastCalls(), QUOTA_INTERVAL)
+})
+
+// 供应商列表在 AIWorkbenchView 里异步加载，首次就绪时立即刷新额度，不用等 5 分钟
+watch(
+  () => providers.value.filter((p) => p.enabled).map((p) => p.id).join(','),
+  () => void loadQuotasAndLastCalls()
+)
+
+onBeforeUnmount(() => {
+  if (quotaTimer) clearInterval(quotaTimer)
+})
 
 async function doTest(p: AiProvider): Promise<void> {
   testLoading[p.id] = true
@@ -254,6 +429,16 @@ function protocolTagType(p: AiProtocol): 'success' | 'warning' | 'primary' {
 function formatTime(iso: string): string {
   const d = new Date(iso)
   return Number.isNaN(d.getTime()) ? iso : d.toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
+}
+function formatLastCall(iso: string | null | undefined): string {
+  if (!iso) return '暂无调用记录'
+  return formatTime(iso)
+}
+function formatMoney(v: number | null, currency: string): string {
+  if (v === null || v === undefined) return '—'
+  const symbol = currency === 'CNY' ? '¥' : currency === 'USD' ? '$' : ''
+  const n = v >= 1000 ? v.toFixed(0) : v >= 1 ? v.toFixed(2) : v.toFixed(4)
+  return `${symbol}${n}`
 }
 </script>
 
@@ -305,6 +490,7 @@ function formatTime(iso: string): string {
 .pc-title { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .pc-name { font-size: 14px; font-weight: 600; }
 .pc-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+.pc-info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 20px; }
 .pc-meta {
   display: flex;
   align-items: flex-start;
@@ -319,6 +505,27 @@ function formatTime(iso: string): string {
 .model-tag { margin: 0 5px 4px 0; }
 .more { color: var(--ink-3); }
 .fetched-at { margin-left: 8px; color: var(--ink-3); font-size: 11px; }
+.filtered-note { margin-left: 6px; font-size: 11px; color: var(--accent-strong); }
+.model-select-btn { margin-left: 6px; }
+
+.quota-strong { font-weight: 600; color: var(--ink-1); }
+.quota-sub { margin-left: 6px; font-size: 11px; color: var(--ink-3); }
+.quota-src { margin-left: 6px; font-size: 11px; color: var(--ink-3); }
+.quota-time { margin-left: 4px; font-size: 11px; color: var(--ink-3); }
+.quota-refresh { margin-left: 6px; }
+.model-row { padding-bottom: 4px; }
 
 .editor-form .form-tip { font-size: 11px; color: var(--ink-3); line-height: 1.4; margin-top: 2px; }
+
+.picker-toolbar { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.picker-count { margin-left: auto; font-size: 12px; color: var(--ink-2); }
+.picker-tip { font-size: 11px; color: var(--ink-3); line-height: 1.5; margin-bottom: 10px; }
+.picker-list {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 4px 12px;
+  max-height: 340px; overflow-y: auto; padding: 4px;
+  border: 1px solid var(--divider); border-radius: var(--radius-sm);
+}
+.picker-item { display: flex; align-items: center; gap: 6px; margin-right: 0; }
+.picker-model { font-size: 12px; }
+.picker-id { font-size: 10px; color: var(--ink-3); }
 </style>
