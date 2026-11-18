@@ -202,7 +202,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onActivated, onMounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   Delete as DeleteIcon,
@@ -251,13 +251,17 @@ const search = ref('')
 const sortBy = ref<SortBy>('due')
 
 async function refresh(): Promise<void> {
-  const [cats, tg, td] = await Promise.all([listTodoCategories(), listTodoTags(), listTodos()])
-  categories.value = cats
-  tags.value = tg
-  todos.value = td
-  // 选中的待办被删除 → 清空详情
-  if (selectedId.value != null && !td.some((t) => t.id === selectedId.value)) {
-    selectedId.value = null
+  try {
+    const [cats, tg, td] = await Promise.all([listTodoCategories(), listTodoTags(), listTodos()])
+    categories.value = cats
+    tags.value = tg
+    todos.value = td
+    // 选中的待办被删除 → 清空详情
+    if (selectedId.value != null && !td.some((t) => t.id === selectedId.value)) {
+      selectedId.value = null
+    }
+  } catch {
+    // 失败提示由 http 拦截器统一弹出，这里保持现有列表不变
   }
 }
 
@@ -465,6 +469,17 @@ async function removeRow(todo: Todo): Promise<void> {
 }
 
 onMounted(refresh)
+
+// App.vue 用 keep-alive 缓存页面，切回待办页不会重新挂载。
+// 首次挂载已由 onMounted 拉取，之后每次激活都刷新，避免外部写入（脚本导入 / AI 助手 / 其他窗口）后列表过期。
+let activatedOnce = false
+onActivated(() => {
+  if (!activatedOnce) {
+    activatedOnce = true
+    return
+  }
+  void refresh()
+})
 </script>
 
 <style scoped>

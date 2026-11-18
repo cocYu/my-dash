@@ -49,7 +49,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { onActivated, onMounted, ref } from 'vue'
 import { listNotes } from '../api/notes'
 import { appMeta } from '../api/http'
 import { pluginRegistry } from '../plugins/store'
@@ -66,7 +66,7 @@ const enabledPlugins = ref(0)
 const totalPlugins = ref(0)
 const electronVersion = `v${appMeta.electronVersion.split('.').slice(0, 2).join('.')}`
 
-onMounted(async () => {
+async function refresh(): Promise<void> {
   try {
     noteCount.value = (await listNotes()).length
   } catch {
@@ -79,6 +79,18 @@ onMounted(async () => {
   } catch {
     enabledPlugins.value = 0
   }
+}
+
+onMounted(refresh)
+
+// keep-alive 缓存页面：切回仪表盘时刷新统计，避免笔记/插件变动后数字过期
+let activatedOnce = false
+onActivated(() => {
+  if (!activatedOnce) {
+    activatedOnce = true
+    return
+  }
+  void refresh()
 })
 </script>
 
