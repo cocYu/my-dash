@@ -10,6 +10,10 @@ import { registerMdThemesIpc } from './md-themes'
 import { registerNotesImportIpc } from './notes-import'
 import { createTray, destroyTray, updateTrayMenu } from './tray'
 import { initPluginManager, registerPluginIpc, registerPluginProtocol } from './plugins/manager'
+import { buildTestMessage, sendToChannel } from './notify/channels'
+import { readNotifyConfig, writeNotifyConfig } from './notify/config'
+import type { NotifyChannelId } from '../types/notify'
+import { runNotifyCheck, startNotifyScheduler, type NotifyContext } from './notify/scheduler'
 import * as cloud from './sync/cloud'
 import { readConfig, writeConfig } from './sync/config'
 import { startScheduler } from './sync/scheduler'
@@ -29,6 +33,9 @@ if (debugPort) {
   app.commandLine.appendSwitch('remote-debugging-port', debugPort)
   app.commandLine.appendSwitch('force-renderer-accessibility')
 }
+
+// Windows 桌面通知（系统通知渠道）需要与 appId 一致的 AppUserModelId；dev 下用进程路径
+app.setAppUserModelId(app.isPackaged ? 'com.mydash.desktop' : process.execPath)
 
 const gotLock = app.requestSingleInstanceLock()
 if (!gotLock) {
@@ -99,6 +106,16 @@ async function bootstrap(): Promise<void> {
   ipcMain.handle('sync:history', () => getHistory())
   ipcMain.handle('sync:list-remote', () => listRemoteBackups())
   startScheduler(() => runSync(syncContext, 'scheduled'))
+
+  // 待办超时通知（配置在设置页「通知提醒」）
+  const notifyContext: NotifyContext = { baseUrl: backendBaseUrl, token }
+  ipcMain.handle('notify:get-config', () => readNotifyConfig())
+  ipcMain.handle('notify:save-config', (_e, cfg) => {
+    writeNotifyConfig(cfg)
+  })
+  ipcMain.handle('notify:test-channel', (_e, id: NotifyChannelId, cfg) => sendToChannel(id, cfg, buildTestMessage(id)))
+  ipcMain.handle('notify:run-check', () => runNotifyCheck(notifyContext))
+  startNotifyScheduler(notifyContext)
   registerExporterIpc()
   registerNotesImportIpc()
   registerMdThemesIpc()

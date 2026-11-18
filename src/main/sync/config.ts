@@ -66,21 +66,15 @@ function decryptAt(cfg: Record<string, unknown>): Record<string, unknown> {
 }
 
 export function readConfig(): SyncConfig {
-  const def = defaultConfig() as unknown as Record<string, unknown>
   let stored: Record<string, unknown> = {}
   try {
     stored = JSON.parse(fs.readFileSync(configFile(), 'utf-8'))
   } catch {
     return defaultConfig()
   }
-  const merged = { ...def, ...stored, decryptAt: undefined }
-  delete merged.decryptAt
-  const cfg = decryptAt(merged) as unknown as SyncConfig
-  // 兜底：缺失的嵌套段用默认值补齐
-  cfg.webdav = { ...defaultConfig().webdav, ...(stored.webdav ?? {}) }
-  cfg.s3 = { ...defaultConfig().s3, ...(stored.s3 ?? {}) }
-  cfg.schedule = { ...defaultConfig().schedule, ...(stored.schedule ?? {}) }
-  return cfg
+  // 先用默认值补齐缺失段，再整体解密——顺序不能反，否则 enc: 加密串会原样透出
+  const merged = { ...defaultConfig(), ...stored }
+  return decryptAt(merged) as unknown as SyncConfig
 }
 
 export function writeConfig(cfg: SyncConfig): void {

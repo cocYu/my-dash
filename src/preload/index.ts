@@ -102,6 +102,14 @@ const api = {
     /** 列举云端实际存在的备份（换新设备时拉取可还原的备份列表） */
     listRemote: (): Promise<unknown[]> => ipcRenderer.invoke('sync:list-remote')
   },
+  notify: {
+    getConfig: (): Promise<unknown> => ipcRenderer.invoke('notify:get-config'),
+    saveConfig: (cfg: unknown): Promise<void> => ipcRenderer.invoke('notify:save-config', cfg),
+    /** 用表单当前值向指定渠道发一条测试消息（不要求先保存） */
+    testChannel: (id: string, cfg: unknown): Promise<void> => ipcRenderer.invoke('notify:test-channel', id, cfg),
+    /** 手动触发一轮提醒检查（调试 / e2e 用，免去等待周期 tick） */
+    runCheck: (): Promise<{ channels: number; events: number }> => ipcRenderer.invoke('notify:run-check')
+  },
   settings: {
     getLoginItem: (): Promise<{ openAtLogin: boolean }> =>
       ipcRenderer.invoke('settings:get-login-item'),

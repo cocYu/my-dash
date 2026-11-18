@@ -27,6 +27,10 @@
             <el-icon><UploadFilled /></el-icon>
             <span>数据同步</span>
           </el-menu-item>
+          <el-menu-item index="notify">
+            <el-icon><Bell /></el-icon>
+            <span>通知提醒</span>
+          </el-menu-item>
           <el-menu-item index="about">
             <el-icon><InfoFilled /></el-icon>
             <span>关于</span>
@@ -119,6 +123,11 @@
         <div v-show="active === 'sync'" class="section">
           <SyncSettingsPanel />
         </div>
+
+        <!-- 通知提醒 -->
+        <div v-show="active === 'notify'" class="section">
+          <NotifySettingsPanel />
+        </div>
       </div>
     </div>
   </div>
@@ -126,14 +135,15 @@
 
 <script setup lang="ts">
 import { onMounted, ref, watch } from 'vue'
-import { Box, Check, Brush, InfoFilled, SwitchButton, UploadFilled } from '@element-plus/icons-vue'
+import { Bell, Box, Check, Brush, InfoFilled, SwitchButton, UploadFilled } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { applyTheme, getSavedThemeId, THEMES, type ThemeMeta } from '../theme'
 import { appMeta } from '../api/http'
 import PluginSettingsPanel from '../components/PluginSettingsPanel.vue'
 import SyncSettingsPanel from '../components/SyncSettingsPanel.vue'
+import NotifySettingsPanel from '../components/NotifySettingsPanel.vue'
 
-type SectionId = 'general' | 'appearance' | 'plugins' | 'sync' | 'about'
+type SectionId = 'general' | 'appearance' | 'plugins' | 'sync' | 'notify' | 'about'
 
 const active = ref<SectionId>('general')
 const currentTheme = ref(getSavedThemeId())
