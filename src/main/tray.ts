@@ -65,7 +65,7 @@ export function updateTrayMenu(getWindow: () => BrowserWindow | null): void {
         app.setLoginItemSettings({ openAtLogin: item.checked })
       }
     },
-    { label: '关于 myDash', click: () => void showAbout() },
+    { label: '关于 AtoZ', click: () => void showAbout() },
     { type: 'separator' },
     { label: '退出', click: () => app.quit() }
   ])
@@ -74,7 +74,7 @@ export function updateTrayMenu(getWindow: () => BrowserWindow | null): void {
 
 export function createTray(getWindow: () => BrowserWindow | null): void {
   tray = new Tray(loadTrayIcon())
-  tray.setToolTip('myDash')
+  tray.setToolTip('AtoZ')
   updateTrayMenu(getWindow)
   console.log(`[main] 托盘已创建，图标目录: ${resolveIconsDir()}`)
 

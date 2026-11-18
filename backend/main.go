@@ -1,4 +1,4 @@
-// myDash 后端：Electron 的子进程，提供本机 REST API + SQLite 存储。
+// AtoZ 后端：Electron 的子进程，提供本机 REST API + SQLite 存储。
 package main
 
 import (

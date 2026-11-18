@@ -112,7 +112,7 @@ JSON：
 
 \`\`\`json
 {
-  "app": "myDash",
+  "app": "AtoZ",
   "version": "0.1.0",
   "features": ["notes", "plugins", "sync", "themes"],
   "editor": { "engine": "CodeMirror 6", "views": ["edit", "split", "preview"] }

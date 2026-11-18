@@ -45,7 +45,7 @@
           <div class="section-head">
             <div>
               <div class="row-title">开机自启</div>
-              <div class="row-desc">登录系统后自动启动 myDash 并收纳到托盘</div>
+              <div class="row-desc">登录系统后自动启动 AtoZ 并收纳到托盘</div>
             </div>
             <el-switch
               :model-value="openAtLogin"

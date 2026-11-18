@@ -1,4 +1,4 @@
-# myDash
+# AtoZ
 
 Electron + Go + SQLite 桌面应用骨架：Vue 3 界面层、Go 子进程后端、SQLite 存储，
 electron-builder 打 Windows NSIS 安装包。当前内置示例模块「笔记管理」演示完整链路。
@@ -66,7 +66,10 @@ build/                    应用图标（electron-builder 读取；icon.ico/icns
 | 托盘左键 | toggle 窗口 | 弹菜单（菜单栏惯例） | **不投递 click**（AppIndicator 限制），仅右键菜单 |
 | 开机自启 | 注册表 Run 键 | LaunchAgents | `~/.config/autostart` |
 | 环境注意 | — | dock 常驻 | GNOME 需装 AppIndicator 扩展（`gnome-shell-extension-appindicator`），KDE/Ubuntu 原生 |
-| 数据目录 | `%APPDATA%\mydash` | `~/Library/Application Support/myDash` | `~/.config/mydash` |
+| 数据目录 | `%APPDATA%\mydash` | `~/Library/Application Support/mydash` | `~/.config/mydash` |
+
+> 应用显示名为 **AtoZ**，数据目录沿用旧名 `mydash`（主进程显式固定 `userData`）。
+> 这样从 myDash 升级后，笔记、附件、AI 配置与云同步设置无需迁移即可继续使用。
 
 > Linux/macOS 为规划实现（代码内已按平台分支），尚未在对应系统实测；mac/linux 打包配置已
 > 在 `electron-builder.yml` 注释预留，生成图标（icns/512.png）已就绪。
@@ -211,7 +214,7 @@ Element Plus 的 `html.dark` 基底。插件页面经 Element Plus 变量自动�
 - **触发规则**：仅「待处理」且配置了截止时间与超时提醒的待办；进入提前期发「即将超时」、跨过截止点发「已超时」，各通知一次（待办改期后自动重新计时）
 - **渠道**：系统通知（桌面弹窗，默认开启）、企业微信群机器人、飞书自定义机器人（可选加签）、钉钉自定义机器人（加签）、邮箱（SMTP 直发，支持多收件人）
 - **聚合防轰炸**：每分钟检查一轮，同一轮到期的多条待办按渠道聚合为一条消息；单渠道发送失败自动重试，不影响其他渠道
-- **限制**：仅在 myDash 运行期间检查（启动时补发错过的提醒），应用退出期间不推送
+- **限制**：仅在 AtoZ 运行期间检查（启动时补发错过的提醒），应用退出期间不推送
 - **安全**：Webhook 地址、加签密钥、SMTP 授权码均经 Electron safeStorage 加密存储；每个渠道支持「发送测试」
 - **联调辅助**：`MYDASH_NOTIFY_OUTBOX=1` 时所有渠道改为写入 `userData/notify/outbox.jsonl`（供自动化验证），`MYDASH_NOTIFY_NO_TIMER=1` 停用周期调度仅手动触发
 

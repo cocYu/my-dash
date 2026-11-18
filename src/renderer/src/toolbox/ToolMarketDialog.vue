@@ -42,7 +42,7 @@
     </el-table>
 
     <div class="foot-hint">
-      工具包为 myDash 插件（主世界运行，权限为声明式约束），仅安装可信来源。安装来源 registry 默认指向仓库内置地址，可替换为自建索引。
+      工具包为 AtoZ 插件（主世界运行，权限为声明式约束），仅安装可信来源。安装来源 registry 默认指向仓库内置地址，可替换为自建索引。
     </div>
   </el-dialog>
 </template>

@@ -206,7 +206,7 @@ function priorityLabel(p: number): string {
 }
 
 export function buildNotifyMessage(events: NotifyEvent[], now: number): NotifyMessage {
-  const title = `myDash 待办提醒（${events.length} 条）`
+  const title = `AtoZ 待办提醒（${events.length} 条）`
   const lines: string[] = []
   const plainLines: string[] = []
   const htmlParts: string[] = []
@@ -231,14 +231,14 @@ export function buildNotifyMessage(events: NotifyEvent[], now: number): NotifyMe
     title,
     md: `### ${title}\n${lines.join('\n')}`,
     plain: `${title}\n${plainLines.join('\n')}`,
-    html: `<div style="font-family:sans-serif"><h2>${title}</h2>${htmlParts.join('')}<p style="color:#888">由 myDash 桌面端发送</p></div>`
+    html: `<div style="font-family:sans-serif"><h2>${title}</h2>${htmlParts.join('')}<p style="color:#888">由 AtoZ 桌面端发送</p></div>`
   }
 }
 
 /** 「发送测试」用的一句话消息 */
 export function buildTestMessage(id: NotifyChannelId): NotifyMessage {
-  const text = `myDash 通知测试成功（${id} 渠道，${new Date().toLocaleString()}）`
-  return { title: 'myDash 通知测试', md: text, plain: text, html: `<p>${text}</p>` }
+  const text = `AtoZ 通知测试成功（${id} 渠道，${new Date().toLocaleString()}）`
+  return { title: 'AtoZ 通知测试', md: text, plain: text, html: `<p>${text}</p>` }
 }
 
 /** outbox 文件路径（e2e 读取用；顺便暴露给设置页「打开目录」） */

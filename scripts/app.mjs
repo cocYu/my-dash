@@ -1,5 +1,5 @@
 /**
- * myDash 应用启停工具（Windows）：
+ * AtoZ 应用启停工具（Windows）：
  *   node scripts/app.mjs start    启动 dev（后台独立运行，日志写入 output/dev.log）
  *   node scripts/app.mjs stop     停止应用与全部相关进程（含托盘驻留/孤儿）
  *   node scripts/app.mjs restart  重启（先 stop 再 start）
@@ -47,9 +47,9 @@ function allStopped() {
 }
 
 function stop() {
-  // 应用本体（electron.exe = dev；myDash.exe = 打包版），强制杀确保托盘驻留也退出
+  // 应用本体（electron.exe = dev；AtoZ.exe = 打包版），强制杀确保托盘驻留也退出
   run('taskkill', ['/IM', 'electron.exe', '/F'])
-  run('taskkill', ['/IM', 'myDash.exe', '/F'])
+  run('taskkill', ['/IM', 'AtoZ.exe', '/F'])
   // Go 后端
   run('taskkill', ['/IM', 'backend-dev.exe', '/F'])
   run('taskkill', ['/IM', 'backend.exe', '/F'])
@@ -114,14 +114,14 @@ function start() {
 
 function status() {
   const electron = /electron\.exe/.test(tasklist('electron.exe'))
-  const packaged = /myDash\.exe/.test(tasklist('myDash.exe'))
+  const packaged = /AtoZ\.exe/.test(tasklist('AtoZ.exe'))
   const backendDev = /backend-dev\.exe/.test(tasklist('backend-dev.exe'))
   const backendRelease = /backend\.exe/.test(tasklist('backend.exe'))
   const vite = (run('netstat', ['-ano']).stdout ?? '').includes(':5173 ')
   console.log(`[app] dev 前端:   ${electron ? '运行中' : '未运行'}`)
   console.log(`[app] Go 后端:    ${backendDev ? '运行中(dev)' : backendRelease ? '运行中(release)' : '未运行'}`)
   console.log(`[app] vite:5173:  ${vite ? '监听中' : '未监听'}`)
-  if (packaged) console.log('[app] 打包版:     运行中（myDash.exe）')
+  if (packaged) console.log('[app] 打包版:     运行中（AtoZ.exe）')
 }
 
 if (action === 'stop') stop()

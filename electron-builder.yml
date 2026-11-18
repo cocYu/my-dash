@@ -1,5 +1,5 @@
 appId: com.mydash.desktop
-productName: myDash
+productName: AtoZ
 directories:
   buildResources: build
   output: dist
@@ -22,7 +22,7 @@ nsis:
   oneClick: true
   perMachine: false
   createDesktopShortcut: always
-  shortcutName: myDash
+  shortcutName: AtoZ
 # ---- macOS 构建预留（需在 macOS 上执行 npm run build:mac）----
 # mac:
 #   icon: build/icon.icns

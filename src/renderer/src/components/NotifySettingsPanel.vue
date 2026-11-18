@@ -10,7 +10,7 @@
       <el-checkbox v-model="cfg.notifyOnSoon" :disabled="!cfg.enabled">即将超时提醒（进入「提前 X 分钟」窗口时通知一次）</el-checkbox>
       <el-checkbox v-model="cfg.notifyOnOverdue" :disabled="!cfg.enabled">已超时提醒（跨过截止时间时通知一次，不重复）</el-checkbox>
       <div class="inline-hint">
-        仅在 myDash 运行期间检查（约每分钟一轮，启动时补发错过的提醒）。只有配置了截止时间且超时提醒不为「不提醒」的待办才会触发。
+        仅在 AtoZ 运行期间检查（约每分钟一轮，启动时补发错过的提醒）。只有配置了截止时间且超时提醒不为「不提醒」的待办才会触发。
       </div>
     </div>
 

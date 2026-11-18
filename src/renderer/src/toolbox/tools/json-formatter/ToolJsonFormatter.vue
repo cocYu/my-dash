@@ -98,7 +98,7 @@ async function copyOutput(): Promise<void> {
 
 function loadSample(): void {
   input.value = JSON.stringify({
-    name: 'myDash',
+    name: 'AtoZ',
     version: '0.1.0',
     features: ['notes', 'todos', 'toolbox'],
     plugins: { enabled: true, list: [{ id: 'notes-stats', version: '0.1.0' }] },

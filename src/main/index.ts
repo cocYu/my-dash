@@ -22,6 +22,11 @@ import { getHistory, listRemoteBackups, restoreFromRecord, runSync, type SyncCon
 // 副作用导入：plugin:// 协议特权声明必须在 app ready 前执行
 import './protocol-scheme'
 
+// 数据目录固定沿用 mydash：应用显示名改为 AtoZ 后，Electron 默认会把 userData 切到
+// %APPDATA%/AtoZ，导致现有数据库/附件/AI 配置（都在 %APPDATA%/mydash）读不到。
+// 显示名与数据目录解耦，老用户升级后数据无缝。必须在任何 getPath('userData') 之前执行。
+app.setPath('userData', path.join(app.getPath('appData'), 'mydash'))
+
 let mainWindow: BrowserWindow | null = null
 let backendBaseUrl = ''
 // 关窗到托盘：X 触发的 close 被拦截为 hide；before-quit（Cmd+Q/托盘退出/菜单退出）放行
@@ -151,7 +156,9 @@ function createWindow(): void {
     width: 1200,
     height: 800,
     autoHideMenuBar: true,
-    title: 'myDash',
+    title: 'AtoZ',
+    // 开发期窗口/任务栏图标；打包后由 exe 内嵌图标接管
+    icon: path.join(app.getAppPath(), 'resources', 'icons', 'icon.png'),
     webPreferences: {
       preload: path.join(__dirname, '../preload/index.js'),
       contextIsolation: true,

@@ -9,8 +9,8 @@
 
     <el-header class="header glass" height="58px">
       <div class="brand">
-        <span class="brand-mark">⚡</span>
-        <span class="brand-name">myDash</span>
+        <img class="brand-mark" :src="logoUrl" alt="AtoZ logo" />
+        <span class="brand-name">AtoZ</span>
       </div>
       <el-menu
         class="topmenu"
@@ -68,6 +68,7 @@
 import { computed } from 'vue'
 import { useRoute } from 'vue-router'
 import { Box, Document, Finished, MagicStick, Odometer, Setting, SetUp, Suitcase } from '@element-plus/icons-vue'
+import logoUrl from './assets/logo.png'
 import { pluginRegistry } from './plugins/store'
 
 const route = useRoute()
@@ -112,9 +113,16 @@ body {
   flex-shrink: 0;
 }
 
+/* 品牌 logo：浅色衬底小徽章，深浅主题下都清晰 */
 .brand-mark {
-  font-size: 20px;
-  filter: drop-shadow(0 0 8px var(--accent-border));
+  width: 26px;
+  height: 26px;
+  border-radius: 8px;
+  padding: 2px;
+  background: linear-gradient(135deg, #fffdf8, #ffefd8);
+  box-shadow:
+    inset 0 0 0 1px rgba(30, 42, 66, 0.1),
+    0 1px 4px rgba(30, 42, 66, 0.14);
 }
 
 .brand-name {

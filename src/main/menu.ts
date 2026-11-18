@@ -1,5 +1,7 @@
 // Package menu: 应用菜单（macOS 屏幕顶部 / Windows+Linux 窗口内 Alt 唤出）。
-import { app, dialog, Menu, type BrowserWindow, type MenuItemConstructorOptions } from 'electron'
+import { app, dialog, Menu, nativeImage, type BrowserWindow, type MenuItemConstructorOptions } from 'electron'
+import path from 'node:path'
+import { resolveIconsDir } from './tray'
 
 /** 显示并聚焦主窗口（托盘/菜单/second-instance 共用） */
 export function showMainWindow(win: BrowserWindow | null): void {
@@ -12,9 +14,10 @@ export function showMainWindow(win: BrowserWindow | null): void {
 /** 关于对话框（Windows/Linux 与托盘共用；macOS 走系统关于面板） */
 export async function showAbout(): Promise<void> {
   await dialog.showMessageBox({
+    icon: nativeImage.createFromPath(path.join(resolveIconsDir(), 'icon.png')),
     type: 'info',
-    title: '关于 myDash',
-    message: `myDash v${app.getVersion()}`,
+    title: '关于 AtoZ',
+    message: `AtoZ v${app.getVersion()}`,
     detail:
       'Electron + Go + SQLite 桌面应用骨架\n' +
       `Electron ${process.versions.electron} · Node ${process.versions.node}\n` +
@@ -39,7 +42,7 @@ export function createAppMenu(getWindow: () => BrowserWindow | null): void {
       { role: 'editMenu' },
       { role: 'viewMenu' },
       { role: 'windowMenu' },
-      { role: 'help', submenu: [{ label: '关于 myDash', role: 'about' }] }
+      { role: 'help', submenu: [{ label: '关于 AtoZ', role: 'about' }] }
     ]
     Menu.setApplicationMenu(Menu.buildFromTemplate(template))
     return
@@ -47,7 +50,7 @@ export function createAppMenu(getWindow: () => BrowserWindow | null): void {
 
   // Windows / Linux：精简菜单，窗口上 autoHideMenuBar 默认隐藏，按 Alt 唤出
   const aboutItem: MenuItemConstructorOptions = {
-    label: '关于 myDash',
+    label: '关于 AtoZ',
     click: () => void showAbout()
   }
   const template: MenuItemConstructorOptions[] = [

@@ -115,7 +115,7 @@ func (h *ToolsHandler) Proxy(c *gin.Context) {
 		outReq.Header.Set(k, v)
 	}
 	if outReq.Header.Get("User-Agent") == "" {
-		outReq.Header.Set("User-Agent", "myDash-Postman/1.0")
+		outReq.Header.Set("User-Agent", "AtoZ-Postman/1.0")
 	}
 
 	timeout := proxyDefaultTimeout

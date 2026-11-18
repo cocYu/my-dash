@@ -1,4 +1,4 @@
-// notes-stats 示例插件：演示 myDash 插件系统的四个核心能力——
+// notes-stats 示例插件：演示 AtoZ 插件系统的四个核心能力——
 //   1. registerPage  注册新页面（侧边栏自动出现入口）
 //   2. registerWidget 注册仪表盘小组件
 //   3. ctx.http       读业务数据（需 permissions 声明 notes:read）
