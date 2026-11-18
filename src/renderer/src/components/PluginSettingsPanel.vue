@@ -7,7 +7,10 @@
         <el-button @click="uninstallSelected">卸载</el-button>
         <el-button @click="openDir">打开插件目录</el-button>
       </div>
-      <el-button :loading="reloading" @click="reload">重载全部</el-button>
+      <div>
+        <el-button type="primary" plain @click="docsVisible = true">插件开发文档</el-button>
+        <el-button :loading="reloading" @click="reload">重载全部</el-button>
+      </div>
     </div>
 
     <el-table
@@ -72,6 +75,8 @@
     />
 
     <input ref="zipInput" type="file" accept=".zip" class="hidden-input" @change="onZipPicked" />
+
+    <PluginDocsDialog v-model="docsVisible" />
   </div>
 </template>
 
@@ -81,8 +86,10 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import type { TableInstance } from 'element-plus'
 import { pluginRegistry } from '../plugins/store'
 import { reloadPlugins } from '../plugins/host'
+import PluginDocsDialog from './PluginDocsDialog.vue'
 import type { PluginInfo } from '../../../preload/index'
 
+const docsVisible = ref(false)
 const loading = ref(false)
 const reloading = ref(false)
 const switchingId = ref<string | null>(null)
