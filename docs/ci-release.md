@@ -97,8 +97,8 @@ publish → 下载全部产物 → 创建/复用 Release → 分卷上传附件
 
 ```
 AtoZ-0.0.2-win-x64-setup.exe
-AtoZ-0.0.2-linux-x64.AppImage
-AtoZ-0.0.2-linux-x64.deb
+AtoZ-0.0.2-linux-x86_64.AppImage
+AtoZ-0.0.2-linux-amd64.deb
 AtoZ-0.0.2-mac-x64.dmg / -arm64.dmg
 AtoZ-0.0.2-mac-x64.zip / -arm64.zip
 ```

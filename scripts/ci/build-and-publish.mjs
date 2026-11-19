@@ -73,21 +73,18 @@ function git(gitArgs) {
 const PLATFORMS = {
   windows: {
     electronFlag: '--win',
-    electronTargets: ['nsis'],
     backendOs: 'windows',
     backendArch: 'x64',
     artifactPattern: /\.exe$/i
   },
   linux: {
     electronFlag: '--linux',
-    electronTargets: ['AppImage', 'deb'],
     backendOs: 'linux',
     backendArch: 'x64',
     artifactPattern: /\.(AppImage|deb)$/i
   },
   macos: {
     electronFlag: '--mac',
-    electronTargets: ['dmg', 'zip'],
     backendOs: 'darwin',
     backendArch: 'universal',
     artifactPattern: /\.(dmg|zip)$/i
@@ -182,7 +179,9 @@ function buildFrontend() {
 
 function buildApp() {
   const npx = process.platform === 'win32' ? 'npx.cmd' : 'npx'
-  const electronArgs = [target.electronFlag, ...target.electronTargets, '--publish', 'never']
+  // 只传平台参数，目标与架构交给 electron-builder.yml
+  // （命令行里写 `--mac dmg zip` 会忽略配置中的 arch 列表，导致只出当前架构）
+  const electronArgs = [target.electronFlag, '--publish', 'never']
   // 本地验证时可用 MYDASH_CI_OUT 指定输出目录，避免覆盖正式 dist
   const outDir = process.env.MYDASH_CI_OUT
   if (outDir) electronArgs.push(`-c.directories.output=${outDir}`)
@@ -267,7 +266,7 @@ function releaseBody() {
     '### 下载说明',
     `- Windows：\`AtoZ-${version}-win-x64-setup.exe\``,
     `- macOS：\`AtoZ-${version}-mac-x64.dmg\` / \`AtoZ-${version}-mac-arm64.dmg\``,
-    `- Linux：\`AtoZ-${version}-linux-x64.AppImage\` / \`.deb\``,
+    `- Linux：\`AtoZ-${version}-linux-x86_64.AppImage\` / \`AtoZ-${version}-linux-amd64.deb\``,
     '',
     '### 分卷附件',
     '受 Gitee 单附件 100MB 限制，超过上限的文件会拆成 `.part1`、`.part2` 分卷。',
