@@ -174,6 +174,12 @@ function buildBackend() {
   fs.rmSync(tmp, { recursive: true, force: true })
 }
 
+function buildFrontend() {
+  // CI 是干净检出，out/ 不存在；必须显式构建，否则 electron-builder 打包出空 asar
+  const npx = process.platform === 'win32' ? 'npx.cmd' : 'npx'
+  run(npx, ['--no-install', 'electron-vite', 'build'])
+}
+
 function buildApp() {
   const npx = process.platform === 'win32' ? 'npx.cmd' : 'npx'
   const electronArgs = [target.electronFlag, ...target.electronTargets, '--publish', 'never']
@@ -395,6 +401,7 @@ if (publishOnly) {
   installDeps()
   setPackageVersion()
   buildBackend()
+  buildFrontend()
   buildApp()
 }
 
