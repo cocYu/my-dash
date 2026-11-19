@@ -1,0 +1,103 @@
+name: Release
+
+# 推送 release/vX.Y.Z tag 触发：三端并行构建 → 汇总发布到 Gitee Release。
+# 也可在 Actions 页面手动运行（填一个已存在的 tag），用于失败后重跑发布。
+on:
+  push:
+    tags:
+      - 'release/**'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: '要发布的 tag（如 release/v0.0.1，必须已存在）'
+        required: true
+
+permissions:
+  contents: read
+
+# 同一个 tag 只跑一条流水线，避免重复创建 Release / 并发上传同名附件
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  # tag 触发时用 ref_name，手动触发时用输入值
+  RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+  # Gitee 普通仓库单附件 100MB，留余量；GVP/企业版可改成 190
+  GITEE_MAX_ASSET_MB: '95'
+
+jobs:
+  build:
+    name: build-${{ matrix.platform }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      # 一个平台失败不影响其他平台继续构建（publish 会在失败时整体不执行）
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            platform: windows
+          - os: macos-latest
+            platform: macos
+          - os: ubuntu-latest
+            platform: linux
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+
+      # 脚本内部会执行 npm ci + npm version + go build + electron-builder
+      - name: 构建 ${{ matrix.platform }}
+        run: node scripts/ci/build-and-publish.mjs --platform ${{ matrix.platform }} --no-publish
+
+      - name: 上传产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-${{ matrix.platform }}
+          if-no-files-found: error
+          retention-days: 7
+          path: |
+            dist/*.exe
+            dist/*.dmg
+            dist/*.zip
+            dist/*.AppImage
+            dist/*.deb
+
+  publish:
+    name: publish → Gitee Release
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # 三端产物合并到同一个目录，避免下载后出现 dist-windows/ 之类的子目录
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist-publish
+          merge-multiple: true
+
+      - name: 发布到 Gitee
+        env:
+          GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
+          GITEE_OWNER: ${{ vars.GITEE_OWNER || 'yukai1998' }}
+          GITEE_REPO: ${{ vars.GITEE_REPO || 'my-dash' }}
+          MYDASH_CI_OUT: dist-publish
+        run: node scripts/ci/build-and-publish.mjs --platform all --publish-only
+
+      - name: 输出 Release 地址
+        run: |
+          echo "Release: https://gitee.com/${{ vars.GITEE_OWNER || 'yukai1998' }}/${{ vars.GITEE_REPO || 'my-dash' }}/releases/tag/${RELEASE_TAG}"

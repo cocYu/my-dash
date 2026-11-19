@@ -1,7 +1,11 @@
 /**
  * 三端发行构建 + 发布到 Gitee Release。
  *
- * 用法（在仓库根目录、对应平台的构建机上执行）：
+ * GitHub Actions（.github/workflows/release.yml）里分两段用：
+ *   build 任务：--platform windows|macos|linux --no-publish
+ *   publish 任务：--platform all --publish-only（产物已下载到 MYDASH_CI_OUT）
+ *
+ * 本地手动构建（在对应系统上执行）：
  *   node scripts/ci/build-and-publish.mjs --platform windows
  *   node scripts/ci/build-and-publish.mjs --platform macos
  *   node scripts/ci/build-and-publish.mjs --platform linux
@@ -87,6 +91,11 @@ const PLATFORMS = {
     backendOs: 'darwin',
     backendArch: 'universal',
     artifactPattern: /\.(dmg|zip)$/i
+  },
+  // 汇总发布：只用于 --publish-only，把三端产物放在同一个目录里一起上传
+  all: {
+    artifactPattern: /\.(exe|dmg|zip|AppImage|deb)$/i,
+    publishOnly: true
   }
 }
 
@@ -94,6 +103,10 @@ if (!PLATFORMS[platform]) {
   fail('缺少或无效的 --platform，可选 windows / macos / linux')
 }
 const target = PLATFORMS[platform]
+
+if (target.publishOnly && !publishOnly) {
+  fail('--platform all 只能配合 --publish-only 使用（不执行构建，只汇总上传已有产物）')
+}
 
 // ---- 版本 ----
 
@@ -185,7 +198,8 @@ function installDeps() {
 }
 
 function distDir() {
-  return path.join(root, process.env.MYDASH_CI_OUT || 'dist')
+  // 用 resolve 而不是 join：CI 里给相对目录（dist-publish），本地测试也支持绝对路径
+  return path.resolve(root, process.env.MYDASH_CI_OUT || 'dist')
 }
 
 // ---- 产物与分卷 ----

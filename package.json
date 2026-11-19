@@ -15,7 +15,8 @@
     "build:mac": "node scripts/build-backend.mjs release --os darwin && electron-vite build && electron-builder --mac dmg zip",
     "build:linux": "node scripts/build-backend.mjs release --os linux && electron-vite build && electron-builder --linux AppImage deb",
     "build:dir": "node scripts/build-backend.mjs release && electron-vite build && electron-builder --dir",
-    "ci:release": "node scripts/ci/build-and-publish.mjs"
+    "ci:release": "node scripts/ci/build-and-publish.mjs",
+    "release:tag": "node scripts/ci/tag-release.mjs"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1170.0",

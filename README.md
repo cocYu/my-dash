@@ -84,19 +84,24 @@ npm run build:win    # Windows 安装包
 npm run build:mac    # macOS dmg + zip（需在 macOS 上执行）
 npm run build:linux  # Linux AppImage + deb
 npm run build:dir    # 只出免安装目录，快速验证打包产物
+npm run release:tag -- 0.2.0   # 打发行 tag 并推 Gitee + GitHub，触发三端构建
 node scripts/e2e-check.mjs   # 先 MYDASH_DEBUG_PORT=9222 npm run dev 再执行
 ```
 
-## 发行构建（Gitee）
+## 发行构建（GitHub Actions → Gitee Release）
 
-推送 `release/x.y.z` tag 触发 Gitee Go 流水线，三端构建后自动创建发行版并上传附件：
+推送 `release/vX.Y.Z` tag 后，由 GitHub Actions 的三台构建机并行产出
+Windows / macOS / Linux 安装包，再汇总发布到 Gitee 仓库的「发行版」页面：
 
 ```bash
-git tag release/0.2.0
-git push origin release/0.2.0
+npm run release:tag -- 0.2.0
 ```
 
-配置与前提（自托管主机组、GITEE_TOKEN、100MB 分卷规则）见 [`docs/ci-release.md`](docs/ci-release.md)。
+之所以用 GitHub Actions 而不是 Gitee Go：Gitee Go 云端只有 Linux 容器（Node 插件最高 15.x），
+macOS 无法云端构建，而「主机管理」是付费能力，个人免费版没有。
+
+一次性准备（GitHub 仓库 + `GITEE_TOKEN` Secret）、产物命名、100MB 分卷规则见
+[`docs/ci-release.md`](docs/ci-release.md)。
 
 ## 新增一个业务模块（三步）
 
