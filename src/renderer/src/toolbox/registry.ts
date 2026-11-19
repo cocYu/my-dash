@@ -13,6 +13,7 @@ import {
   MagicStick,
   Promotion,
   Search,
+  Share,
   Switch,
   Timer
 } from '@element-plus/icons-vue'
@@ -119,6 +120,14 @@ export const toolboxRegistry = reactive<{ tools: ToolMeta[] }>({
       category: '生成',
       description: '批量生成 UUID v4',
       component: defineAsyncComponent(() => import('./tools/uuid/ToolUuid.vue'))
+    },
+    {
+      id: 'file-transfer',
+      name: '文件互传',
+      icon: Share,
+      category: '文件',
+      description: '局域网内手机 / 电脑扫码互传文件，数据不经过云端',
+      component: defineAsyncComponent(() => import('./tools/file-transfer/ToolFileTransfer.vue'))
     }
   ]
 })

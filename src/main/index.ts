@@ -6,6 +6,7 @@ import { startBackend, stopBackend } from './backend'
 import { registerAttachmentsIpc, registerAttachmentsProtocol } from './attachments'
 import { registerAiIpc } from './ai/ipc'
 import { registerExporterIpc } from './exporter'
+import { registerFileTransferIpc } from './file-transfer'
 import { createAppMenu } from './menu'
 import { registerMdThemesIpc } from './md-themes'
 import { registerNotesImportIpc } from './notes-import'
@@ -137,6 +138,9 @@ async function bootstrap(): Promise<void> {
   // AI 工作台（供应商配置加密落盘，网关层兼容 chat/responses/messages）
   // 工具层需要直连本机后端，传入 baseUrl 与访问令牌
   registerAiIpc({ baseUrl: backendBaseUrl, token })
+
+  // 工具箱「文件互传」：局域网临时 HTTP 服务（用户手动启动，退出应用时关闭）
+  registerFileTransferIpc()
 
   createWindow()
   createAppMenu(() => mainWindow)

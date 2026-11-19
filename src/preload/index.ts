@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from 'electron'
+import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import type {
   AiAgent,
   AiSessionMessage,
@@ -23,6 +23,7 @@ import type {
   AiUsageQuery,
   AiUsageSummary
 } from '../types/ai'
+import type { TransferFile, TransferStatus } from '../types/file-transfer'
 
 export type {
   AiChatMessage,
@@ -58,6 +59,7 @@ export type {
   AiToolLevel,
   AiToolStep
 } from '../types/agent'
+export type { TransferFile, TransferStatus } from '../types/file-transfer'
 export { AI_PRESETS } from '../types/ai'
 
 export interface PluginInfo {
@@ -132,6 +134,38 @@ const api = {
     openDir: (): Promise<void> => ipcRenderer.invoke('attachments:open-dir'),
     /** 清理未被任何笔记/版本引用的附件 */
     gc: (): Promise<{ deleted: number; freedBytes: number }> => ipcRenderer.invoke('attachments:gc')
+  },
+  /** 工具箱「文件互传」：局域网临时 HTTP 服务 */
+  fileTransfer: {
+    start: (): Promise<TransferStatus> => ipcRenderer.invoke('file-transfer:start'),
+    stop: (): Promise<TransferStatus> => ipcRenderer.invoke('file-transfer:stop'),
+    status: (): Promise<TransferStatus> => ipcRenderer.invoke('file-transfer:status'),
+    list: (): Promise<TransferFile[]> => ipcRenderer.invoke('file-transfer:list'),
+    remove: (name: string): Promise<TransferFile[]> => ipcRenderer.invoke('file-transfer:delete', name),
+    clear: (): Promise<TransferFile[]> => ipcRenderer.invoke('file-transfer:clear'),
+    openDir: (): Promise<void> => ipcRenderer.invoke('file-transfer:open-dir'),
+    /** 选择自定义存放目录（弹系统对话框），返回最新状态 */
+    chooseDir: (): Promise<{ ok: boolean; message?: string; status: TransferStatus }> =>
+      ipcRenderer.invoke('file-transfer:choose-dir'),
+    /** 恢复默认目录（userData/file-transfer） */
+    resetDir: (): Promise<TransferStatus> => ipcRenderer.invoke('file-transfer:reset-dir'),
+    /** 弹系统对话框选择文件，复制进互传目录（主动分享给对方） */
+    addFiles: (): Promise<{ added: string[]; files: TransferFile[] }> =>
+      ipcRenderer.invoke('file-transfer:add-files'),
+    /** 拖拽入窗：传入文件真实路径，复制进互传目录 */
+    addPaths: (paths: string[]): Promise<{ added: string[]; files: TransferFile[] }> =>
+      ipcRenderer.invoke('file-transfer:add-paths', paths),
+    /** 取拖拽 File 的真实路径（Electron 32+ 已移除 File.path） */
+    pathForFile: (file: File): string => webUtils.getPathForFile(file),
+    /** 把收到的文件另存到用户指定位置 */
+    saveAs: (name: string): Promise<{ ok: boolean; path?: string; message?: string }> =>
+      ipcRenderer.invoke('file-transfer:save-as', name),
+    /** 订阅文件列表变化（对端上传/删除），返回取消订阅函数 */
+    onChange: (cb: () => void): (() => void) => {
+      const listener = (): void => cb()
+      ipcRenderer.on('file-transfer:changed', listener)
+      return () => ipcRenderer.removeListener('file-transfer:changed', listener)
+    }
   },
   plugins: {
     list: (): Promise<PluginInfo[]> => ipcRenderer.invoke('plugins:list'),
