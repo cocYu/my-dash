@@ -17,12 +17,14 @@ export function getLastStartOptions(): BackendStartOptions | null {
   return lastStartOptions
 }
 
-/** dev 模式取编译产物 backend-dev.exe，打包后取安装资源里的 backend.exe */
+/** dev 模式取编译产物 backend-dev[.exe]，打包后取安装资源里的 backend[.exe] */
 export function resolveBackendExe(): string {
+  const exeName = process.platform === 'win32' ? 'backend.exe' : 'backend'
+  const devName = process.platform === 'win32' ? 'backend-dev.exe' : 'backend-dev'
   if (app.isPackaged) {
-    return path.join(process.resourcesPath, 'backend', 'backend.exe')
+    return path.join(process.resourcesPath, 'backend', exeName)
   }
-  return path.join(app.getAppPath(), 'backend', 'bin', 'backend-dev.exe')
+  return path.join(app.getAppPath(), 'backend', 'bin', devName)
 }
 
 /**

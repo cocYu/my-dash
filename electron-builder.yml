@@ -5,17 +5,72 @@ directories:
   output: dist
 files:
   - out/**
+  - package.json
+  # 渲染层依赖已由 Vite 打进 out/renderer；随包再带一份只会让安装包超过 Gitee Release 的 100MB 限制。
+  # 主进程实际用到的是 @aws-sdk/client-s3 / adm-zip / nodemailer / qrcode / webdav（及其传递依赖），不要排除。
+  - "!node_modules/element-plus/**"
+  - "!node_modules/@element-plus/**"
+  - "!node_modules/vue/**"
+  - "!node_modules/vue-router/**"
+  - "!node_modules/@vue/**"
+  - "!node_modules/codemirror/**"
+  - "!node_modules/@codemirror/**"
+  - "!node_modules/@lezer/**"
+  - "!node_modules/highlight.js/**"
+  - "!node_modules/katex/**"
+  - "!node_modules/markdown-it/**"
+  - "!node_modules/markdown-it-*/**"
+  - "!node_modules/@fontsource/**"
+  - "!node_modules/@babel/**"
+  - "!node_modules/axios/**"
+  - "!node_modules/dayjs/**"
+  - "!node_modules/json5/**"
+  - "!node_modules/lodash-es/**"
 asar: true
-# Go 后端 + 托盘图标作为运行时资源打进安装包
+# 安装包体积：maximum 让 NSIS 用 7z 最高压缩，配合上面的裁剪把体积压到 Gitee 单附件限制以内
+compression: maximum
+# 只保留中文和英文语言包（Electron 自带几十种 locale，占体积）
+electronLanguages:
+  - zh-CN
+  - en-US
+# Go 后端二进制：CI 里按平台编译到 backend/bin/win|mac|linux/，只把当前平台的打进包
 extraResources:
-  - from: backend/bin/backend.exe
-    to: backend/backend.exe
+  - from: backend/bin/${os}
+    to: backend
   - from: resources/icons
     to: icons
 win:
   icon: build/icon.ico
+  artifactName: AtoZ-${version}-win-${arch}-setup.${ext}
   target:
     - target: nsis
+      arch:
+        - x64
+mac:
+  icon: build/icon.icns
+  category: public.app-category.productivity
+  identity: null
+  hardenedRuntime: false
+  artifactName: AtoZ-${version}-mac-${arch}.${ext}
+  target:
+    - target: dmg
+      arch:
+        - x64
+        - arm64
+    - target: zip
+      arch:
+        - x64
+        - arm64
+linux:
+  icon: build/icon-512.png
+  category: Utility
+  maintainer: yukai1998
+  artifactName: AtoZ-${version}-linux-${arch}.${ext}
+  target:
+    - target: AppImage
+      arch:
+        - x64
+    - target: deb
       arch:
         - x64
 nsis:
@@ -31,14 +86,4 @@ nsis:
   # 自定义页：是否创建桌面快捷方式（build/installer.nsh）
   include: installer.nsh
   uninstallDisplayName: AtoZ
-# ---- macOS 构建预留（需在 macOS 上执行 npm run build:mac）----
-# mac:
-#   icon: build/icon.icns
-#   category: public.app-category.productivity
-#   target:
-#     - dmg
-# ---- Linux 构建预留 ----
-# linux:
-#   icon: build/icon-512.png
-#   target:
-#     - AppImage
+  artifactName: AtoZ-${version}-win-${arch}-setup.${ext}

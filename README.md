@@ -71,18 +71,32 @@ build/                    应用图标（electron-builder 读取；icon.ico/icns
 > 应用显示名为 **AtoZ**，数据目录沿用旧名 `mydash`（主进程显式固定 `userData`）。
 > 这样从 myDash 升级后，笔记、附件、AI 配置与云同步设置无需迁移即可继续使用。
 
-> Linux/macOS 为规划实现（代码内已按平台分支），尚未在对应系统实测；mac/linux 打包配置已
-> 在 `electron-builder.yml` 注释预留，生成图标（icns/512.png）已就绪。
+> macOS / Linux 打包配置已启用（`electron-builder.yml`），但尚未在对应系统实测；
+> 发行流水线见下方「发行构建」。
 
 ## 常用命令
 
 ```bash
 npm run dev          # 编译 dev 后端 + 启动应用（热更新）
 npm run typecheck    # vue-tsc + tsc 类型检查
-npm run build        # release 后端 + 前端构建 + NSIS 安装包 → dist/
-npm run build:dir    # 只出 win-unpacked 免安装目录，快速验证打包产物
+npm run build        # 等同 build:win：release 后端 + 前端构建 + NSIS 安装包 → dist/
+npm run build:win    # Windows 安装包
+npm run build:mac    # macOS dmg + zip（需在 macOS 上执行）
+npm run build:linux  # Linux AppImage + deb
+npm run build:dir    # 只出免安装目录，快速验证打包产物
 node scripts/e2e-check.mjs   # 先 MYDASH_DEBUG_PORT=9222 npm run dev 再执行
 ```
+
+## 发行构建（Gitee）
+
+推送 `release/x.y.z` tag 触发 Gitee Go 流水线，三端构建后自动创建发行版并上传附件：
+
+```bash
+git tag release/0.2.0
+git push origin release/0.2.0
+```
+
+配置与前提（自托管主机组、GITEE_TOKEN、100MB 分卷规则）见 [`docs/ci-release.md`](docs/ci-release.md)。
 
 ## 新增一个业务模块（三步）
 

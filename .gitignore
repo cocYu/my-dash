@@ -21,3 +21,6 @@ desktop.ini
 
 # 本地打包验证目录
 dist-verify*/
+dist-size/
+dist-ci*/
+dist-linux-check*/
