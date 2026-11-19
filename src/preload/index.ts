@@ -4,9 +4,11 @@ import type {
   AiSessionMessage,
   AiSessionMeta,
   AiSessionPatch,
+  AiSessionSearchHit,
   AiStreamEventPayload,
   AiStreamRequest,
   AiStreamResult,
+  AiToolConfirmRequest,
   AiToolInfo
 } from '../types/agent'
 import type {
@@ -51,10 +53,12 @@ export type {
   AiSessionMessage,
   AiSessionMeta,
   AiSessionPatch,
+  AiSessionSearchHit,
   AiStreamEvent,
   AiStreamEventPayload,
   AiStreamRequest,
   AiStreamResult,
+  AiToolConfirmRequest,
   AiToolInfo,
   AiToolLevel,
   AiToolStep
@@ -263,7 +267,10 @@ const api = {
       /** 更新会话级设置（模型 / 思考强度覆盖）与上下文摘要 */
       update: (id: string, patch: AiSessionPatch): Promise<AiSessionMeta | null> =>
         ipcRenderer.invoke('ai:sessions:update', id, patch),
-      messages: (id: string): Promise<AiSessionMessage[]> => ipcRenderer.invoke('ai:sessions:messages', id)
+      messages: (id: string): Promise<AiSessionMessage[]> => ipcRenderer.invoke('ai:sessions:messages', id),
+      /** 在会话消息正文中搜索关键词，按会话聚合返回命中片段 */
+      search: (query: string, agentId?: string): Promise<AiSessionSearchHit[]> =>
+        ipcRenderer.invoke('ai:sessions:search', query, agentId)
     },
     /** 发起流式对话；文本增量经 onStreamEvent 推送 */
     streamChat: (req: AiStreamRequest): Promise<AiStreamResult> => ipcRenderer.invoke('ai:chat:stream', req),
@@ -273,6 +280,15 @@ const api = {
       const listener = (_e: unknown, payload: AiStreamEventPayload): void => cb(payload)
       ipcRenderer.on('ai:stream:event', listener)
       return () => ipcRenderer.removeListener('ai:stream:event', listener)
+    },
+    /** 写操作确认：回传用户选择（允许 / 拒绝） */
+    confirmTool: (requestId: string, approved: boolean): Promise<boolean> =>
+      ipcRenderer.invoke('ai:tool:confirm-response', requestId, approved),
+    /** 订阅写操作确认请求，返回取消订阅函数 */
+    onToolConfirm: (cb: (req: AiToolConfirmRequest) => void): (() => void) => {
+      const listener = (_e: unknown, payload: AiToolConfirmRequest): void => cb(payload)
+      ipcRenderer.on('ai:tool:confirm', listener)
+      return () => ipcRenderer.removeListener('ai:tool:confirm', listener)
     }
   },
   exporter: {

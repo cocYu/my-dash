@@ -1,21 +1,53 @@
 // AI 工作台 IPC：供应商 CRUD / 拉取模型 / 对话 / 生图 / 历史 / 提示词增强 / 自定义 Agent。
-import { ipcMain, type IpcMainInvokeEvent } from 'electron'
-import type { AiChatRequest, AiImageHistoryItem, AiImageRequest, AiPromptEnhanceRequest, AiProvider, AiUsageQuery } from '../../types/ai'
-import type { AiAgent, AiSessionPatch, AiStreamRequest, AiStreamResult, AiToolStep } from '../../types/agent'
+import { ipcMain, type IpcMainInvokeEvent, type WebContents } from 'electron'
+import { randomUUID } from 'node:crypto'
+import type { AiChatRequest, AiImageRequest, AiPromptEnhanceRequest, AiProvider, AiUsageQuery } from '../../types/ai'
+import type { AiAgent, AiSessionPatch, AiStreamRequest, AiStreamResult, AiToolConfirmRequest, AiToolStep } from '../../types/agent'
 import { providersForRenderer, readProviders, saveProvidersFromRenderer, writeProviders } from './config'
 import { chatOnce, fetchModels, testProvider } from './gateway'
-import { generateImage } from './image'
+import { generateImageAndRecord } from './image'
 import { appendHistory, clearHistory, deleteHistory, readHistory } from './history'
 import { appendUsage, lastCallAt, queryUsage } from './usage'
 import { fetchQuota } from './quota'
 import { readAgents, removeAgent, saveAgent } from './agents'
-import { appendMessage, createSession, deleteSession, listSessions, readMessages, readSession, renameSession, updateSession } from './sessions'
+import { appendMessage, createSession, deleteSession, deleteSessionsByAgent, listSessions, readMessages, readSession, renameSession, searchSessions, updateSession } from './sessions'
 import { runAgentLoop } from './agent-loop'
 import { prepareContext, type PreparedContext } from './context'
-import { defaultReadTools, toolCatalog, toolsForAgent, type ToolContext } from './tools'
+import { defaultReadTools, toolCatalog, toolsForAgent, type ToolConfirmInput, type ToolContext } from './tools'
 
 /** 正在进行的流式请求：requestId → 中止控制器 */
 const activeStreams = new Map<string, AbortController>()
+
+/** 等待用户确认的写操作：requestId → 决议函数 */
+const pendingConfirms = new Map<string, (approved: boolean) => void>()
+
+/** 确认超时：5 分钟无响应按拒绝处理 */
+const CONFIRM_TIMEOUT = 5 * 60 * 1000
+
+/** 把写操作确认请求发给渲染层并等待结果；用户停止生成或超时都算拒绝 */
+function requestToolConfirm(sender: WebContents, req: ToolConfirmInput, signal: AbortSignal): Promise<boolean> {
+  if (signal.aborted || sender.isDestroyed()) return Promise.resolve(false)
+
+  const requestId = randomUUID()
+  return new Promise<boolean>((resolve) => {
+    let settled = false
+    const finish = (approved: boolean): void => {
+      if (settled) return
+      settled = true
+      pendingConfirms.delete(requestId)
+      clearTimeout(timer)
+      signal.removeEventListener('abort', onAbort)
+      resolve(approved)
+    }
+    const timer = setTimeout(() => finish(false), CONFIRM_TIMEOUT)
+    const onAbort = (): void => finish(false)
+    signal.addEventListener('abort', onAbort)
+
+    pendingConfirms.set(requestId, finish)
+    const payload: AiToolConfirmRequest = { requestId, ...req }
+    sender.send('ai:tool:confirm', payload)
+  })
+}
 
 function findProvider(id: string): AiProvider {
   const p = readProviders().find((x) => x.id === id)
@@ -73,41 +105,8 @@ export function registerAiIpc(toolCtx: ToolContext): void {
     if (!req.model) throw new Error('请选择生图模型')
     if (!req.prompt?.trim()) throw new Error('请输入提示词')
     const provider = findProvider(req.providerId)
-    const results = await generateImage(provider, req)
-    try {
-      appendUsage({
-        id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-        providerId: provider.id,
-        providerName: provider.name,
-        model: req.model,
-        kind: 'image',
-        promptTokens: 0,
-        completionTokens: 0,
-        totalTokens: 0,
-        at: new Date().toISOString()
-      })
-    } catch (err) {
-      console.error('[ai] 记录生图用量失败:', err)
-    }
-    // 写历史只存元数据，图片本体已在附件库；历史写入失败不应让生图主流程报错
-    const item: AiImageHistoryItem = {
-      id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-      prompt: req.prompt.trim(),
-      model: req.model,
-      providerId: provider.id,
-      providerName: provider.name,
-      mode: req.mode,
-      ...(req.size ? { size: req.size } : {}),
-      ...(req.quality ? { quality: req.quality } : {}),
-      createdAt: new Date().toISOString(),
-      images: results.map((r) => ({ name: r.name, ...(r.width && r.height ? { width: r.width, height: r.height } : {}) }))
-    }
-    try {
-      appendHistory(item)
-    } catch (err) {
-      console.error('[ai] 写生图历史失败:', err)
-    }
-    return results
+    // 生图 + 用量 + 历史统一在 image.ts 内完成（Agent 工具走同一入口）
+    return generateImageAndRecord(provider, req)
   })
 
   ipcMain.handle('ai:history:list', () => readHistory())
@@ -165,10 +164,22 @@ export function registerAiIpc(toolCtx: ToolContext): void {
     })
   })
 
-  ipcMain.handle('ai:agents:remove', (_e, id: string) => removeAgent(id))
+  ipcMain.handle('ai:agents:remove', (_e, id: string) => {
+    const list = removeAgent(id)
+    // 助手的会话正文单独存文件，随助手一起清理
+    deleteSessionsByAgent(id)
+    return list
+  })
 
   // 工具目录：编辑页勾选，defaults 为新建助手的默认只读工具
   ipcMain.handle('ai:tools:list', () => ({ tools: toolCatalog(), defaults: defaultReadTools() }))
+
+  // 渲染层回传写操作确认结果
+  ipcMain.handle('ai:tool:confirm-response', (_e, requestId: string, approved: boolean) => {
+    const finish = pendingConfirms.get(requestId)
+    if (finish) finish(Boolean(approved))
+    return true
+  })
 
   // ---- 会话 ----
   ipcMain.handle('ai:sessions:list', (_e, agentId?: string) => listSessions(agentId))
@@ -184,6 +195,9 @@ export function registerAiIpc(toolCtx: ToolContext): void {
     return updateSession(id, safe) ?? null
   })
   ipcMain.handle('ai:sessions:messages', (_e, id: string) => readMessages(id))
+  ipcMain.handle('ai:sessions:search', (_e, query: string, agentId?: string) =>
+    searchSessions(typeof query === 'string' ? query : '', agentId)
+  )
 
   // ---- 流式对话 ----
   ipcMain.handle(
@@ -286,7 +300,14 @@ export function registerAiIpc(toolCtx: ToolContext): void {
           contextSummary: prepared.summary,
           messages: prepared.messages,
           tools,
-          ctx: toolCtx,
+          // 写操作确认：把请求推给渲染层弹窗，等用户点允许/拒绝
+          ctx: {
+            ...toolCtx,
+            // 生图等工具需要助手级配置与解密后的供应商密钥
+            agent,
+            getProviders: readProviders,
+            confirm: (confirmReq) => requestToolConfirm(event.sender, confirmReq, controller.signal)
+          },
           signal: controller.signal,
           callbacks: {
             onText: (delta) => send({ type: 'text', delta }),

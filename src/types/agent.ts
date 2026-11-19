@@ -22,8 +22,14 @@ export interface AiAgent {
   contextWindow?: number
   /** 默认思考强度；会话内可覆盖 */
   reasoningEffort?: AiReasoningEffort
-  /** 允许调用的工具 ID 白名单（后续批次启用，先预留） */
+  /** 允许调用的工具 ID 白名单 */
   tools: string[]
+  /** 生图工具使用的供应商；缺省沿用对话供应商 */
+  imageProviderId?: string
+  /** 生图工具使用的模型；为空表示未配置，工具会提示用户补全 */
+  imageModel?: string
+  /** 生图默认尺寸（如 1024x1024），为空表示由模型决定 */
+  imageSize?: string
   /** 挂载为背景知识的文件夹（后续批次启用） */
   knowledgeFolderIds: number[]
   /** 空会话时展示的快捷指令 */
@@ -84,7 +90,21 @@ export interface AiToolStep {
   /** 结果摘要，超长已截断 */
   summary: string
   ok: boolean
+  /** 写操作被用户拒绝（未执行，不算失败） */
+  skipped?: boolean
   durationMs: number
+}
+
+/** 写操作执行前的确认请求：主进程 → 渲染层 */
+export interface AiToolConfirmRequest {
+  requestId: string
+  tool: string
+  label: string
+  /** 一句话说明将要做什么 */
+  summary: string
+  /** 详细内容预览（如将要写入的正文片段） */
+  detail?: string
+  level: AiToolLevel
 }
 
 /** 单条会话消息 */
@@ -95,6 +115,22 @@ export interface AiSessionMessage {
   createdAt: string
   /** 该轮回答中执行过的工具调用（仅助手消息） */
   steps?: AiToolStep[]
+}
+
+/** 会话搜索命中：一个会话一条，带首个命中片段 */
+export interface AiSessionSearchHit {
+  sessionId: string
+  title: string
+  agentId: string
+  updatedAt: string
+  /** 该会话内命中的消息条数 */
+  hits: number
+  /** 首个命中消息的角色 */
+  role: 'user' | 'assistant'
+  /** 命中位置附近的一段原文（已压缩空白） */
+  snippet: string
+  /** 首个命中的时间 */
+  at: string
 }
 
 /** 发起流式对话的请求 */

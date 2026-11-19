@@ -1,11 +1,29 @@
 // Agent 工具注册表：本地能力的统一封装，供 LLM 以函数调用形式使用。
-// 本批次只开放只读工具（read）：查文件夹 / 列笔记 / 搜笔记 / 读笔记 / 查待办 / 取当前时间。
-// 写操作与破坏性操作在后续批次加入，并配套确认弹窗与审计日志。
+// 只读工具（read）直接执行；写工具（write）必须经用户确认后才执行，并落审计日志。
+import type { AiProvider } from '../../types/ai'
 import type { AiAgent, AiToolInfo, AiToolLevel } from '../../types/agent'
+import { generateImageAndRecord } from './image'
+
+/** 写操作确认请求（requestId 由 IPC 层补齐） */
+export interface ToolConfirmInput {
+  tool: string
+  label: string
+  /** 一句话说明将要做什么 */
+  summary: string
+  /** 详细内容预览（如将要写入的正文片段） */
+  detail?: string
+  level: AiToolLevel
+}
 
 export interface ToolContext {
   baseUrl: string
   token: string
+  /** 当前运行中的 Agent：生图等工具需要读取助手级配置 */
+  agent?: AiAgent
+  /** 读取供应商列表（含解密后的密钥），生图工具据此调用图像接口 */
+  getProviders?: () => AiProvider[]
+  /** 写操作确认回调；未注入时一律拒绝写操作（安全默认） */
+  confirm?: (req: ToolConfirmInput) => Promise<boolean>
 }
 
 /** 供 LLM 使用的函数声明（JSON Schema） */
@@ -21,10 +39,19 @@ export interface ToolSchema {
 interface ToolDef extends AiToolInfo {
   parameters: Record<string, unknown>
   run: (args: Record<string, unknown>, ctx: ToolContext) => Promise<string>
+  /** 写操作执行前给用户看的说明；只读工具不需要 */
+  preview?: (args: Record<string, unknown>, ctx: ToolContext) => Promise<ToolPreview> | ToolPreview
+}
+
+export interface ToolPreview {
+  summary: string
+  detail?: string
 }
 
 /** 工具返回内容的字符上限：超出会截断，避免撑爆上下文 */
 export const TOOL_RESULT_LIMIT = 4000
+/** 确认弹窗里正文预览的上限 */
+const PREVIEW_LIMIT = 800
 
 // ---- 通用助手 ----
 
@@ -36,10 +63,8 @@ function apiUrl(ctx: ToolContext, pathname: string, params?: Record<string, stri
   return url.toString()
 }
 
-async function apiGet(ctx: ToolContext, pathname: string, params?: Record<string, string | number | undefined>): Promise<unknown> {
-  const res = await fetch(apiUrl(ctx, pathname, params), {
-    headers: { 'X-API-Token': ctx.token }
-  })
+/** 统一解析后端响应：HTTP 非 2xx 或 code != 0 都抛错 */
+async function readApiBody(res: Response, pathname: string): Promise<unknown> {
   const text = await res.text()
   let body: Record<string, unknown> | null = null
   try {
@@ -57,6 +82,38 @@ async function apiGet(ctx: ToolContext, pathname: string, params?: Record<string
   return body.data
 }
 
+async function apiGet(
+  ctx: ToolContext,
+  pathname: string,
+  params?: Record<string, string | number | undefined>
+): Promise<unknown> {
+  const res = await fetch(apiUrl(ctx, pathname, params), {
+    headers: { 'X-API-Token': ctx.token }
+  })
+  return readApiBody(res, pathname)
+}
+
+async function apiSend(
+  ctx: ToolContext,
+  method: 'POST' | 'PUT' | 'DELETE',
+  pathname: string,
+  body?: unknown
+): Promise<unknown> {
+  const res = await fetch(apiUrl(ctx, pathname), {
+    method,
+    headers: { 'X-API-Token': ctx.token, 'Content-Type': 'application/json' },
+    ...(body === undefined ? {} : { body: JSON.stringify(body) })
+  })
+  return readApiBody(res, pathname)
+}
+
+/** 正文预览：超长截断并标注原长 */
+function previewBody(text: string): string {
+  if (!text) return '（正文为空）'
+  if (text.length <= PREVIEW_LIMIT) return text
+  return `${text.slice(0, PREVIEW_LIMIT)}\n…（共 ${text.length} 字，预览已截断）`
+}
+
 function asString(v: unknown, fallback = ''): string {
   return typeof v === 'string' ? v : fallback
 }
@@ -71,6 +128,12 @@ function asNumber(v: unknown): number | undefined {
 export function clipText(text: string, limit = TOOL_RESULT_LIMIT): string {
   if (text.length <= limit) return text
   return `${text.slice(0, limit)}\n\n（内容过长已截断，原始长度 ${text.length} 字符）`
+}
+
+/** 供应商展示名：找不到时退回占位文案，避免确认弹窗信息缺失 */
+function providerNameOf(ctx: ToolContext, id: string): string {
+  if (!id) return '未选择供应商'
+  return ctx.getProviders?.().find((p) => p.id === id)?.name ?? `供应商 #${id}`
 }
 
 function fmtTime(iso: unknown): string {
@@ -276,6 +339,244 @@ const TOOLS: ToolDef[] = [
       const pad = (n: number): string => String(n).padStart(2, '0')
       const local = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`
       return `本地时间：${local}（${week}），时区 ${Intl.DateTimeFormat().resolvedOptions().timeZone}；UTC：${now.toISOString()}`
+    }
+  },
+  {
+    name: 'create_note',
+    label: '新建笔记',
+    level: 'write',
+    description:
+      '在用户笔记库里新建一篇 Markdown 笔记。仅当用户明确要求记录、保存、写一篇笔记时调用；只是讨论内容不要擅自建档。不确定文件夹时先 list_folders，或直接放根目录。',
+    parameters: {
+      type: 'object',
+      properties: {
+        title: { type: 'string', description: '笔记标题；同一文件夹内不能重名' },
+        content: { type: 'string', description: 'Markdown 正文' },
+        folder_id: { type: 'number', description: '目标文件夹 ID；不传表示根目录' }
+      },
+      required: ['title'],
+      additionalProperties: false
+    },
+    preview: (args) => {
+      const title = asString(args.title).trim()
+      const content = asString(args.content)
+      const fid = asNumber(args.folder_id)
+      return {
+        summary: `在${fid === undefined ? '根目录' : `文件夹 #${fid}`}新建笔记《${title || '(无标题)'}》，正文 ${content.length} 字`,
+        detail: previewBody(content)
+      }
+    },
+    run: async (args, ctx) => {
+      const title = asString(args.title).trim()
+      if (!title) return '缺少标题，请提供 title 参数。'
+      const content = asString(args.content)
+      const fid = asNumber(args.folder_id)
+      const created = (await apiSend(ctx, 'POST', '/api/notes', {
+        title,
+        content,
+        ...(fid !== undefined ? { folder_id: fid } : {})
+      })) as Record<string, unknown>
+      return `已创建笔记《${asString(created.title, title)}》，ID=${String(created.id)}，正文 ${content.length} 字。`
+    }
+  },
+  {
+    name: 'update_note',
+    label: '修改笔记',
+    level: 'write',
+    description:
+      '修改已有笔记。content 会整体覆盖原正文（不是追加），只改标题时可省略 content。用户没有明确要求改写时不要调用；改写前建议先 read_note 拿到原文。',
+    parameters: {
+      type: 'object',
+      properties: {
+        id: { type: 'number', description: '笔记 ID（来自 list_notes / search_notes / read_note）' },
+        title: { type: 'string', description: '新标题；不传表示不改' },
+        content: { type: 'string', description: '新的完整正文，会覆盖原内容；不传表示不改' }
+      },
+      required: ['id'],
+      additionalProperties: false
+    },
+    preview: async (args, ctx) => {
+      const id = asNumber(args.id)
+      const hasTitle = args.title !== undefined
+      const hasContent = args.content !== undefined
+      const nextTitle = hasTitle ? asString(args.title) : ''
+      const nextContent = hasContent ? asString(args.content) : ''
+
+      let oldTitle = ''
+      if (id !== undefined) {
+        try {
+          const note = (await apiGet(ctx, `/api/notes/${id}`)) as Record<string, unknown>
+          oldTitle = asString(note.title)
+        } catch {
+          /* 读不到原名不影响确认流程 */
+        }
+      }
+      const parts: string[] = []
+      if (hasTitle) parts.push(`标题改为《${nextTitle || '(空)'}》`)
+      if (hasContent) parts.push(`正文整体覆盖为 ${nextContent.length} 字`)
+      return {
+        summary: `修改笔记${oldTitle ? `《${oldTitle}》` : ` #${String(id)}`}：${parts.join('；') || '无实际改动'}`,
+        detail: hasContent ? previewBody(nextContent) : undefined
+      }
+    },
+    run: async (args, ctx) => {
+      const id = asNumber(args.id)
+      if (id === undefined) return '缺少笔记 id 参数。'
+      const body: Record<string, unknown> = {}
+      if (args.title !== undefined) body.title = asString(args.title)
+      if (args.content !== undefined) body.content = asString(args.content)
+      if (!Object.keys(body).length) return '没有提供任何需要修改的字段（title / content）。'
+      const updated = (await apiSend(ctx, 'PUT', `/api/notes/${id}`, body)) as Record<string, unknown>
+      return `已更新笔记《${asString(updated.title, String(id))}》，更新于 ${fmtTime(updated.updated_at)}。`
+    }
+  },
+  {
+    name: 'create_todo',
+    label: '新建待办',
+    level: 'write',
+    description:
+      '为用户新建一条待办。仅当用户明确要求加待办、提醒、记一件要做的事时调用。截止时间用 ISO 8601（如 2026-11-20T18:00:00+08:00）；需要相对时间时先 get_current_time。',
+    parameters: {
+      type: 'object',
+      properties: {
+        title: { type: 'string', description: '待办标题' },
+        description: { type: 'string', description: '补充说明' },
+        priority: { type: 'number', description: '优先级 0-6，0 最高，默认 4' },
+        due_at: { type: 'string', description: '截止时间，ISO 8601 带时区' }
+      },
+      required: ['title'],
+      additionalProperties: false
+    },
+    preview: (args) => {
+      const title = asString(args.title).trim()
+      const pri = asNumber(args.priority)
+      const due = asString(args.due_at).trim()
+      const bits = [`新建待办「${title || '(未命名)'}」`]
+      if (pri !== undefined) bits.push(`优先级 P${Math.max(0, Math.min(6, Math.round(pri)))}`)
+      if (due) bits.push(`截止 ${due}`)
+      const desc = asString(args.description).trim()
+      return { summary: bits.join('，'), detail: desc || undefined }
+    },
+    run: async (args, ctx) => {
+      const title = asString(args.title).trim()
+      if (!title) return '缺少标题，请提供 title 参数。'
+      const body: Record<string, unknown> = { title }
+      const desc = asString(args.description).trim()
+      if (desc) body.description = desc
+      const pri = asNumber(args.priority)
+      if (pri !== undefined) body.priority = Math.max(0, Math.min(6, Math.round(pri)))
+      const due = asString(args.due_at).trim()
+      if (due) {
+        const ms = new Date(due).getTime()
+        if (Number.isNaN(ms)) return `截止时间无法解析：${due}。请使用 ISO 8601，例如 2026-11-20T18:00:00+08:00。`
+        // 后端存 UTC RFC3339，去掉毫秒保持格式一致
+        body.due_at = new Date(ms).toISOString().replace(/\.\d{3}Z$/, 'Z')
+      }
+      const created = (await apiSend(ctx, 'POST', '/api/todos', body)) as Record<string, unknown>
+      return `已创建待办「${asString(created.title, title)}」，ID=${String(created.id)}，状态=${asString(created.status, 'open')}。`
+    }
+  },
+  {
+    name: 'delete_note',
+    label: '删除笔记',
+    level: 'destructive',
+    description:
+      '永久删除一篇笔记，连同它的全部历史版本，删除后无法恢复。仅当用户明确要求删除某篇笔记时调用；不确定是哪一篇时先用 search_notes / list_notes 核实。',
+    parameters: {
+      type: 'object',
+      properties: {
+        id: { type: 'number', description: '要删除的笔记 ID（务必先核实）' }
+      },
+      required: ['id'],
+      additionalProperties: false
+    },
+    preview: async (args, ctx) => {
+      const id = asNumber(args.id)
+      if (id === undefined) return { summary: '缺少笔记 ID，无法删除' }
+      try {
+        const note = (await apiGet(ctx, `/api/notes/${id}`)) as Record<string, unknown>
+        const title = asString(note.title, '(无标题)')
+        const content = asString(note.content)
+        return {
+          summary: `永久删除笔记《${title}》（#${id}，正文 ${content.length} 字），历史版本一并清除，不可恢复`,
+          detail: previewBody(content)
+        }
+      } catch {
+        return { summary: `永久删除笔记 #${id}（未能读取标题），历史版本一并清除，不可恢复` }
+      }
+    },
+    run: async (args, ctx) => {
+      const id = asNumber(args.id)
+      if (id === undefined) return '缺少笔记 id 参数。'
+      await apiSend(ctx, 'DELETE', `/api/notes/${id}`)
+      return `已删除笔记 #${id}，历史版本一并清除。`
+    }
+  },
+  {
+    name: 'generate_image',
+    label: '生成图片',
+    level: 'paid',
+    description:
+      '按提示词调用图像生成模型画一张图（会产生费用）。图片会存入附件库与生图历史，并在回复中以 Markdown 图片展示。仅在用户明确要求画图、生成插画/海报/图标时调用；提示词要写清主体、场景、风格、光线、构图。',
+    parameters: {
+      type: 'object',
+      properties: {
+        prompt: { type: 'string', description: '完整的生图提示词（建议包含主体、风格、光线、画质词）' },
+        size: {
+          type: 'string',
+          description: '图片尺寸，如 1024x1024 / 1536x1024 / 1024x1536；不传则用助手配置的默认尺寸'
+        }
+      },
+      required: ['prompt'],
+      additionalProperties: false
+    },
+    preview: (args, ctx) => {
+      const prompt = asString(args.prompt).trim()
+      const model = ctx.agent?.imageModel?.trim()
+      const provider = ctx.agent?.imageProviderId?.trim() || ctx.agent?.providerId || ''
+      const size = asString(args.size).trim() || ctx.agent?.imageSize?.trim() || '默认尺寸'
+      const who = model ? `${providerNameOf(ctx, provider)} / ${model}` : '尚未配置生图模型'
+      return {
+        summary: `调用 ${who} 生成 1 张图片（${size}），属于付费操作`,
+        detail: prompt ? `提示词：${prompt}` : '提示词为空'
+      }
+    },
+    run: async (args, ctx) => {
+      const prompt = asString(args.prompt).trim()
+      if (!prompt) return '缺少提示词，请提供 prompt 参数。'
+
+      const agent = ctx.agent
+      const model = agent?.imageModel?.trim()
+      if (!model) {
+        return '助手没有配置生图模型，无法生成图片。请告知用户在助手编辑页的「生图配置」里选择供应商与模型，或到「AI 生图」页手动生成。'
+      }
+      const providerId = agent?.imageProviderId?.trim() || agent?.providerId || ''
+      const provider = (ctx.getProviders?.() ?? []).find((p) => p.id === providerId)
+      if (!provider) {
+        return '找不到可用的生图供应商配置。请告知用户在助手编辑页重新选择生图供应商。'
+      }
+      if (!provider.apiKey) {
+        return `生图供应商「${provider.name}」缺少 API Key，请到「供应商管理」补全后再试。`
+      }
+
+      const size = asString(args.size).trim() || agent?.imageSize?.trim() || undefined
+      const results = await generateImageAndRecord(provider, {
+        providerId: provider.id,
+        model,
+        mode: 'text2image',
+        prompt,
+        ...(size ? { size } : {}),
+        n: 1
+      })
+      const first = results[0]
+      if (!first) return '生图接口没有返回图片数据。'
+
+      const dims = first.width && first.height ? `${first.width}×${first.height}` : size || '尺寸未知'
+      return [
+        `已生成 1 张图片（${dims}，模型 ${model}），已存入附件库与生图历史。`,
+        `![生成的图片](attach://${first.name})`,
+        `引用名：attach://${first.name}`
+      ].join('\n')
     }
   }
 ]

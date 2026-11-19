@@ -2,7 +2,8 @@
 // 只支持 chat 协议的供应商；其余协议由调用方降级为纯对话。
 import type { AiAgent, AiReasoningEffort, AiToolStep } from '../../types/agent'
 import type { AiChatMessage, AiProvider } from '../../types/ai'
-import { clipText, type ToolContext, type ToolDef } from './tools'
+import { clipText, type ToolContext, type ToolDef, type ToolPreview } from './tools'
+import { appendAudit } from './audit'
 import { streamChatWithTools, type StreamUsage, type WireMessage, type WireToolSchema } from './stream'
 
 /** 最多几轮工具往返，防止模型无限调用 */
@@ -120,6 +121,8 @@ export async function runAgentLoop(params: AgentRunParams): Promise<AgentRunResu
       let args: Record<string, unknown> = {}
       let output = ''
       let ok = true
+      let skipped = false
+      let approved: boolean | null = null
 
       if (!tool) {
         ok = false
@@ -131,11 +134,57 @@ export async function runAgentLoop(params: AgentRunParams): Promise<AgentRunResu
           output = `工具参数不是合法 JSON，请重新按 schema 生成：${parsed.error}`
         } else {
           args = parsed.value
-          try {
-            output = await tool.run(args, ctx)
-          } catch (err) {
-            ok = false
-            output = `执行失败：${err instanceof Error ? err.message : String(err)}`
+
+          // 写操作必须先经用户确认；没有确认通道时一律拒绝（安全默认）
+          if (tool.level !== 'read') {
+            let preview: ToolPreview = { summary: `执行「${tool.label}」` }
+            try {
+              if (tool.preview) preview = await tool.preview(args, ctx)
+            } catch (err) {
+              preview = {
+                summary: `执行「${tool.label}」（预览生成失败：${err instanceof Error ? err.message : '未知错误'}）`
+              }
+            }
+            approved = ctx.confirm
+              ? await ctx.confirm({
+                  tool: tool.name,
+                  label: tool.label,
+                  summary: preview.summary,
+                  ...(preview.detail ? { detail: preview.detail } : {}),
+                  level: tool.level
+                })
+              : false
+
+            if (!approved) {
+              ok = false
+              skipped = true
+              output = '用户拒绝了这次操作，未执行。不要重复尝试同一操作；如需继续，请先向用户说明情况并询问。'
+            }
+          }
+
+          if (!skipped) {
+            try {
+              output = await tool.run(args, ctx)
+            } catch (err) {
+              ok = false
+              output = `执行失败：${err instanceof Error ? err.message : String(err)}`
+            }
+          }
+
+          // 写操作落审计：允许/拒绝、成功/失败都记
+          if (tool.level !== 'read') {
+            appendAudit({
+              at: new Date().toISOString(),
+              agentId: agent.id,
+              agentName: agent.name,
+              tool: tool.name,
+              label: tool.label,
+              level: tool.level,
+              args,
+              ok,
+              approved,
+              result: clipText(output, 500)
+            })
           }
         }
       }
@@ -146,6 +195,7 @@ export async function runAgentLoop(params: AgentRunParams): Promise<AgentRunResu
         args,
         summary: clipText(output, STEP_SUMMARY_LIMIT),
         ok,
+        ...(skipped ? { skipped: true } : {}),
         durationMs: Date.now() - started
       }
       steps.push(step)
@@ -157,7 +207,8 @@ export async function runAgentLoop(params: AgentRunParams): Promise<AgentRunResu
         content: clipText(output, undefined)
       })
 
-      if (ok) {
+      // 用户拒绝不算工具故障，不应触发「连续失败」熔断
+      if (ok || skipped) {
         lastFailedTool = ''
         failureStreak = 0
       } else if (call.name === lastFailedTool) {

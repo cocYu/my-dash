@@ -40,7 +40,39 @@
         <span class="side-title">对话记录</span>
         <el-button size="small" text :disabled="!activeAgentId" @click="newSession()">新建</el-button>
       </div>
-      <div class="session-list">
+      <div class="session-search">
+        <el-input
+          v-model="sessionQuery"
+          size="small"
+          clearable
+          :prefix-icon="Search"
+          placeholder="搜索对话内容"
+        />
+      </div>
+
+      <!-- 有搜索词时展示跨会话命中；否则展示当前助手的会话列表 -->
+      <div v-if="sessionQuery.trim()" class="session-list">
+        <div
+          v-for="h in searchHits"
+          :key="h.sessionId"
+          class="session-item hit-item"
+          :class="{ active: h.sessionId === activeSessionId }"
+          @click="openSession(h.sessionId)"
+        >
+          <el-icon class="session-icon"><Search /></el-icon>
+          <div class="hit-body">
+            <div class="hit-title" :title="h.title">{{ h.title }}</div>
+            <div class="hit-snippet">
+              <span class="hit-role">{{ h.role === 'user' ? '我' : 'AI' }}</span>{{ h.snippet }}
+            </div>
+          </div>
+          <span v-if="h.hits > 1" class="hit-count">{{ h.hits }}</span>
+        </div>
+        <div v-if="searching" class="side-empty small">搜索中…</div>
+        <div v-else-if="!searchHits.length" class="side-empty small">没有匹配的对话</div>
+      </div>
+
+      <div v-else class="session-list">
         <div
           v-for="s in sessions"
           :key="s.id"
@@ -50,6 +82,7 @@
         >
           <el-icon class="session-icon"><ChatLineRound /></el-icon>
           <span class="session-title" :title="s.title">{{ s.title }}</span>
+          <el-icon class="session-edit" title="重命名" @click.stop="renameSession(s)"><EditPen /></el-icon>
           <el-icon class="session-del" title="删除对话" @click.stop="removeSession(s.id)"><Delete /></el-icon>
         </div>
         <div v-if="!sessions.length" class="side-empty small">暂无对话</div>
@@ -180,10 +213,10 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, h, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { ChatLineRound, Delete, InfoFilled, MoreFilled, Plus, WarningFilled } from '@element-plus/icons-vue'
-import type { AiAgent, AiReasoningEffort, AiSessionMessage, AiSessionMeta, AiStreamRequest, AiToolStep } from '../../../../types/agent'
+import { ChatLineRound, Delete, EditPen, InfoFilled, MoreFilled, Plus, Search, WarningFilled } from '@element-plus/icons-vue'
+import type { AiAgent, AiReasoningEffort, AiSessionMessage, AiSessionMeta, AiSessionSearchHit, AiStreamRequest, AiToolConfirmRequest, AiToolStep } from '../../../../types/agent'
 import type { AiModel, AiProvider } from '../../../../types/ai'
 import { useAiProviders } from '../../ai/store'
 import { toPlain } from '../../ai/plain'
@@ -206,6 +239,13 @@ const streamError = ref('')
 const streamNotice = ref('')
 const currentRequestId = ref('')
 const scrollRef = ref<HTMLElement>()
+
+// 会话搜索：输入防抖 250ms，切换助手时清空
+const sessionQuery = ref('')
+const searchHits = ref<AiSessionSearchHit[]>([])
+const searching = ref(false)
+let searchTimer = 0
+let searchSeq = 0
 
 // 会话级设置：模型与思考强度可覆盖 Agent 默认值，变更即写回会话
 const overrideProviderId = ref('')
@@ -238,13 +278,91 @@ const editingAgent = ref<AiAgent | null>(null)
 
 const activeAgent = computed(() => agents.value.find((a) => a.id === activeAgentId.value))
 
+let offToolConfirm: (() => void) | null = null
+
 onMounted(async () => {
   await Promise.all([ensureLoaded(), loadAgents()])
+  offToolConfirm = window.api.ai.onToolConfirm((req) => {
+    void handleToolConfirm(req)
+  })
 })
 
 onBeforeUnmount(() => {
+  offToolConfirm?.()
+  offToolConfirm = null
+  window.clearTimeout(searchTimer)
   if (currentRequestId.value) void window.api.ai.abortStream(currentRequestId.value)
 })
+
+/** 输入防抖后搜索当前助手的会话正文；序号保证过期响应不覆盖新结果 */
+watch(sessionQuery, (v) => {
+  window.clearTimeout(searchTimer)
+  const q = v.trim()
+  if (!q) {
+    searchHits.value = []
+    searching.value = false
+    return
+  }
+  if (!activeAgentId.value) return
+  searching.value = true
+  searchTimer = window.setTimeout(() => {
+    void runSessionSearch(q)
+  }, 250)
+})
+
+async function runSessionSearch(q: string): Promise<void> {
+  const agentId = activeAgentId.value
+  const seq = ++searchSeq
+  try {
+    const hits = await window.api.ai.sessions.search(q, agentId)
+    if (seq !== searchSeq || sessionQuery.value.trim() !== q) return
+    searchHits.value = hits
+  } catch {
+    if (seq === searchSeq) searchHits.value = []
+  } finally {
+    if (seq === searchSeq) searching.value = false
+  }
+}
+
+/** 写操作确认：用 VNode 渲染，模型产出的文本一律当纯文本，不解析 HTML */
+// 串行队列：ElMessageBox 是单例，连续两次确认若并行弹出会复用实例导致结果串位
+let confirmQueue: Promise<void> = Promise.resolve()
+
+function handleToolConfirm(req: AiToolConfirmRequest): Promise<void> {
+  confirmQueue = confirmQueue.then(() => showToolConfirm(req)).catch(() => undefined)
+  return confirmQueue
+}
+
+async function showToolConfirm(req: AiToolConfirmRequest): Promise<void> {
+  const message = h('div', { style: 'font-size:13px;line-height:1.7' }, [
+    h('p', { style: 'margin:0 0 8px;word-break:break-word' }, req.summary),
+    req.detail
+      ? h(
+          'pre',
+          {
+            style:
+              'margin:0;max-height:260px;overflow:auto;white-space:pre-wrap;word-break:break-word;' +
+              'font-size:12px;line-height:1.6;padding:8px 10px;border-radius:6px;background:rgba(127,127,127,.1)'
+          },
+          req.detail
+        )
+      : null
+  ])
+
+  const danger = req.level === 'destructive'
+  try {
+    await ElMessageBox.confirm(message, `${req.label} · 需要你确认`, {
+      confirmButtonText: danger ? '确认删除' : req.level === 'paid' ? '确认生成' : '允许',
+      cancelButtonText: '拒绝',
+      type: danger ? 'error' : 'warning'
+    })
+    await window.api.ai.confirmTool(req.requestId, true)
+  } catch {
+    await window.api.ai.confirmTool(req.requestId, false)
+  }
+  // 等上一只弹窗的关闭动画走完，再放行下一次确认
+  await new Promise((resolve) => setTimeout(resolve, 180))
+}
 
 async function loadAgents(): Promise<void> {
   try {
@@ -263,6 +381,8 @@ async function selectAgent(id: string): Promise<void> {
   streamError.value = ''
   streamNotice.value = ''
   liveSteps.value = []
+  sessionQuery.value = ''
+  searchHits.value = []
   applyAgentDefaults()
   try {
     sessions.value = await window.api.ai.sessions.list(id)
@@ -389,6 +509,20 @@ async function openSession(id: string): Promise<void> {
     scrollBottom()
   } catch (err) {
     ElMessage.error(err instanceof Error ? err.message : '读取对话失败')
+  }
+}
+
+async function renameSession(s: AiSessionMeta): Promise<void> {
+  try {
+    const { value } = await ElMessageBox.prompt('输入新的对话名称', '重命名对话', {
+      inputValue: s.title,
+      inputValidator: (v: string) => (v && v.trim() ? true : '名称不能为空'),
+      confirmButtonText: '保存',
+      cancelButtonText: '取消'
+    })
+    sessions.value = await window.api.ai.sessions.rename(s.id, value.trim())
+  } catch {
+    /* 取消改名 */
   }
 }
 
@@ -543,6 +677,7 @@ function providerName(id: string): string {
 }
 .side-title { font-size: 12px; font-weight: 600; color: var(--ink-2); }
 .session-head { border-top: 1px solid var(--divider); margin-top: 8px; padding-top: 8px; }
+.session-search { padding: 0 2px 6px; flex-shrink: 0; }
 
 .agent-list { flex: 1; overflow-y: auto; min-height: 80px; }
 .agent-item {
@@ -584,9 +719,28 @@ function providerName(id: string): string {
 .session-item.active { background: var(--fill-hover); color: var(--ink-1); }
 .session-icon { font-size: 13px; flex-shrink: 0; color: var(--ink-3); }
 .session-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.session-del { font-size: 12px; color: var(--ink-3); opacity: 0; transition: opacity 0.15s ease; }
-.session-item:hover .session-del { opacity: 1; }
+.session-edit, .session-del { font-size: 12px; color: var(--ink-3); opacity: 0; transition: opacity 0.15s ease; }
+.session-item:hover .session-edit, .session-item:hover .session-del { opacity: 1; }
+.session-edit:hover { color: var(--el-color-primary); }
 .session-del:hover { color: var(--el-color-danger); }
+
+/* 搜索命中：两行展示标题 + 片段 */
+.session-item.hit-item { align-items: flex-start; }
+.hit-body { flex: 1; min-width: 0; }
+.hit-title {
+  font-size: 12px; color: var(--ink-1);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.hit-snippet {
+  margin-top: 2px; font-size: 11px; line-height: 1.5; color: var(--ink-3);
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  overflow: hidden; word-break: break-word;
+}
+.hit-role { margin-right: 4px; font-size: 10px; color: var(--accent-strong); }
+.hit-count {
+  flex-shrink: 0; padding: 0 4px; font-size: 10px; line-height: 15px;
+  border-radius: 3px; background: var(--accent-soft); color: var(--accent-strong);
+}
 
 .side-empty { padding: 18px 8px; text-align: center; font-size: 11px; line-height: 1.7; color: var(--ink-3); }
 .side-empty.small { padding: 10px 8px; }

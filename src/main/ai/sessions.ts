@@ -5,7 +5,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { aiDir } from './config'
-import type { AiSessionMessage, AiSessionMeta, AiSessionPatch } from '../../types/agent'
+import type { AiSessionMessage, AiSessionMeta, AiSessionPatch, AiSessionSearchHit } from '../../types/agent'
 
 const MAX_MESSAGES = 500
 const MAX_SESSIONS_PER_AGENT = 50
@@ -84,6 +84,18 @@ export function deleteSession(id: string): void {
   fs.rmSync(messageFile(id), { force: true })
 }
 
+/** 删除某个助手的全部会话（删除助手时调用，避免消息文件成为孤儿） */
+export function deleteSessionsByAgent(agentId: string): void {
+  if (!agentId) return
+  const list = readIndex()
+  const stale = list.filter((s) => s.agentId === agentId)
+  if (!stale.length) return
+  for (const s of stale) {
+    fs.rmSync(messageFile(s.id), { force: true })
+  }
+  writeIndex(list.filter((s) => s.agentId !== agentId))
+}
+
 export function renameSession(id: string, title: string): AiSessionMeta[] {
   const list = readIndex()
   const target = list.find((s) => s.id === id)
@@ -147,4 +159,73 @@ export function appendMessage(sessionId: string, msg: AiSessionMessage): void {
     }
     writeIndex(list)
   }
+}
+
+// ---- 会话搜索 ----
+
+/** 片段前后各留多少字符 */
+const SNIPPET_BEFORE = 36
+const SNIPPET_AFTER = 64
+/** 单次搜索最多返回多少个会话 */
+const SEARCH_SESSION_LIMIT = 30
+
+/** 截取命中位置附近的原文，压缩换行便于单行展示 */
+function makeSnippet(content: string, index: number, keywordLen: number): string {
+  const start = Math.max(0, index - SNIPPET_BEFORE)
+  const end = Math.min(content.length, index + keywordLen + SNIPPET_AFTER)
+  const body = content.slice(start, end).replace(/\s+/g, ' ').trim()
+  return `${start > 0 ? '…' : ''}${body}${end < content.length ? '…' : ''}`
+}
+
+/**
+ * 在会话消息正文中做大小写不敏感的子串搜索。
+ * 返回按会话聚合的命中（每个会话一条，带首个命中片段）；标题命中但正文未命中也会返回。
+ */
+export function searchSessions(query: string, agentId?: string): AiSessionSearchHit[] {
+  const q = query.trim().toLowerCase()
+  if (q.length < 1) return []
+  const hits: AiSessionSearchHit[] = []
+
+  for (const meta of listSessions(agentId)) {
+    const messages = readMessages(meta.id)
+    let count = 0
+    let first: { role: 'user' | 'assistant'; snippet: string; at: string } | null = null
+
+    for (const m of messages) {
+      const content = typeof m.content === 'string' ? m.content : ''
+      const idx = content.toLowerCase().indexOf(q)
+      if (idx < 0) continue
+      count++
+      if (!first) {
+        first = { role: m.role, snippet: makeSnippet(content, idx, q.length), at: m.createdAt }
+      }
+    }
+
+    if (count > 0 && first) {
+      hits.push({
+        sessionId: meta.id,
+        title: meta.title,
+        agentId: meta.agentId,
+        updatedAt: meta.updatedAt,
+        hits: count,
+        role: first.role,
+        snippet: first.snippet,
+        at: first.at
+      })
+    } else if (meta.title.toLowerCase().includes(q)) {
+      hits.push({
+        sessionId: meta.id,
+        title: meta.title,
+        agentId: meta.agentId,
+        updatedAt: meta.updatedAt,
+        hits: 0,
+        role: 'user',
+        snippet: '（仅标题命中）',
+        at: meta.updatedAt
+      })
+    }
+
+    if (hits.length >= SEARCH_SESSION_LIMIT) break
+  }
+  return hits
 }

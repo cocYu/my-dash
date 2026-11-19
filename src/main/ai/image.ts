@@ -1,8 +1,10 @@
 // AI 生图：文生图 /images/generations 与图生图 /images/edits（OpenAI Images API 风格）。
 // 生成的图片落到笔记附件库（内容寻址），返回 attach:// 可用的文件名 + 预览 dataUrl。
 // 注意：Anthropic messages 协议供应商不提供 Images API，界面侧需提示用户改用 OpenAI 兼容供应商。
-import type { AiImageRequest, AiImageResult, AiProvider } from '../../types/ai'
+import type { AiImageHistoryItem, AiImageRequest, AiImageResult, AiProvider } from '../../types/ai'
 import { extFromMime, storeImage } from '../attachments'
+import { appendHistory } from './history'
+import { appendUsage } from './usage'
 
 const DEFAULT_TIMEOUT = 180_000
 
@@ -183,6 +185,54 @@ export async function generateImage(provider: AiProvider, req: AiImageRequest): 
   for (const item of items) {
     const bytes = await extractImage(item, token)
     results.push(await toResult(bytes, typeof item.content_type === 'string' ? item.content_type : undefined))
+  }
+  return results
+}
+
+/**
+ * 工作台与 Agent 工具共用的生图入口：生图 + 用量记录 + 历史落盘。
+ * 统计与历史属于附带效果，失败只打日志，不影响已生成的图片返回。
+ */
+export async function generateImageAndRecord(
+  provider: AiProvider,
+  req: AiImageRequest
+): Promise<AiImageResult[]> {
+  const results = await generateImage(provider, req)
+  const now = new Date()
+  try {
+    appendUsage({
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      providerId: provider.id,
+      providerName: provider.name,
+      model: req.model,
+      kind: 'image',
+      promptTokens: 0,
+      completionTokens: 0,
+      totalTokens: 0,
+      at: now.toISOString()
+    })
+  } catch (err) {
+    console.error('[ai] 记录生图用量失败:', err)
+  }
+  try {
+    const item: AiImageHistoryItem = {
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      prompt: req.prompt.trim(),
+      model: req.model,
+      providerId: provider.id,
+      providerName: provider.name,
+      mode: req.mode,
+      ...(req.size ? { size: req.size } : {}),
+      ...(req.quality ? { quality: req.quality } : {}),
+      createdAt: now.toISOString(),
+      images: results.map((r) => ({
+        name: r.name,
+        ...(r.width && r.height ? { width: r.width, height: r.height } : {})
+      }))
+    }
+    appendHistory(item)
+  } catch (err) {
+    console.error('[ai] 写生图历史失败:', err)
   }
   return results
 }
