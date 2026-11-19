@@ -18,3 +18,6 @@ output/
 .env.*
 Thumbs.db
 desktop.ini
+
+# 本地打包验证目录
+dist-verify*/

@@ -19,10 +19,18 @@ win:
       arch:
         - x64
 nsis:
-  oneClick: true
+  # 向导式安装：显示欢迎页、安装模式、安装目录与自定义选项页
+  oneClick: false
   perMachine: false
+  allowElevation: true
+  # 允许用户选择安装目录（自定义目录页由 electron-builder 生成）
+  allowToChangeInstallationDirectory: true
   createDesktopShortcut: always
+  createStartMenuShortcut: true
   shortcutName: AtoZ
+  # 自定义页：是否创建桌面快捷方式（build/installer.nsh）
+  include: installer.nsh
+  uninstallDisplayName: AtoZ
 # ---- macOS 构建预留（需在 macOS 上执行 npm run build:mac）----
 # mac:
 #   icon: build/icon.icns
