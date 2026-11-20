@@ -34,12 +34,14 @@ import {
   ElDropdown,
   ElDropdownItem,
   ElDropdownMenu,
+  ElDialog,
   ElEmpty,
   ElForm,
   ElFormItem,
   ElInput,
   ElInputNumber,
   ElMessage,
+  ElMessageBox,
   ElProgress,
   ElRadio,
   ElRadioButton,
@@ -70,11 +72,12 @@ const vueApis = {
 /** 插件可见的 Element Plus 组件（渲染函数里直接作为标签对象使用） */
 const uiComponents = {
   ElAlert, ElButton, ElCard, ElCheckbox, ElCheckboxGroup, ElCollapse, ElCollapseItem,
-  ElDatePicker, ElDivider, ElDropdown, ElDropdownItem, ElDropdownMenu, ElEmpty,
+  ElDatePicker, ElDivider, ElDropdown, ElDropdownItem, ElDropdownMenu, ElDialog, ElEmpty,
   ElForm, ElFormItem, ElInput, ElInputNumber, ElRadio, ElRadioButton, ElRadioGroup,
   ElSelect, ElOption, ElSlider, ElStatistic, ElSwitch, ElTabPane, ElTabs,
   ElTable, ElTableColumn, ElTag, ElTooltip,
-  message: ElMessage
+  message: ElMessage,
+  messageBox: ElMessageBox
 }
 
 /** 权限 → HTTP 白名单（方法 + URL 前缀）。新增业务数据权限在这里扩表。 */

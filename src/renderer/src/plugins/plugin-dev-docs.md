@@ -134,10 +134,10 @@ onActivated, onDeactivated, nextTick, resolveComponent
 
 ```
 ElAlert, ElButton, ElCard, ElCheckbox, ElCheckboxGroup, ElCollapse, ElCollapseItem,
-ElDatePicker, ElDivider, ElDropdown, ElDropdownItem, ElDropdownMenu, ElEmpty,
+ElDatePicker, ElDivider, ElDropdown, ElDropdownItem, ElDropdownMenu, ElDialog, ElEmpty,
 ElForm, ElFormItem, ElInput, ElInputNumber, ElRadio, ElRadioButton, ElRadioGroup,
 ElSelect, ElOption, ElSlider, ElStatistic, ElSwitch, ElTabPane, ElTabs,
-ElTable, ElTableColumn, ElTag, ElTooltip, message(ElMessage)
+ElTable, ElTableColumn, ElTag, ElTooltip, message(ElMessage), messageBox(ElMessageBox)
 ```
 
 ### ctx.registerPage(page)
@@ -228,6 +228,64 @@ events: {
 ### ctx.log(...args)
 
 等价 `console.log`，输出自动带 `[plugin:<id>]` 前缀，调试时在 DevTools Console 过滤该前缀即可。
+
+## 桌面能力（window.api.capture / pin / plugins.files）
+
+除 `ctx.*` 外，插件运行在主世界，可直接使用主应用暴露的三组桌面能力（截图类插件依赖它们，旧版应用上 `window.api.capture` 等不存在，请做能力检测并提示升级）：
+
+### window.api.capture — 桌面截屏
+
+```ts
+capture: {
+  sources(): Promise<CaptureSourceInfo[]>           // 屏幕+窗口源（缩略图 dataURL，供自绘选择器）
+  startRegion(opts: { pluginId: string; page?: string }): Promise<{ ok: boolean }>
+  getOverlayImage(): Promise<string | null>         // 仅遮罩窗自身可取（冻屏全帧）
+  finishRegion(payload: { dataUrl: string }): void  // 遮罩页确认选框：关遮罩、还原主窗、结果推回主窗
+  cancelRegion(): Promise<void>                     // 遮罩页取消
+  onRegionResult(cb: (p: { dataUrl: string }) => void): () => void  // 主窗接收区域截图结果
+  snapshot(sourceId: string): Promise<{ dataUrl: string; width: number; height: number }>  // 单帧快照
+  saveFile(p: { bytes; ext?; dir?; defaultName? }): Promise<{ saved: boolean; filePath? }> // dir 直写 / 弹另存
+  chooseDir(): Promise<{ dir: string } | null>
+}
+```
+
+- 源 id 形如 `window:xxx:yyy` / `screen:x:y`；**窗口源**建议走 `getUserMedia({video:{mandatory:{chromeMediaSource:'desktop', chromeMediaSourceId}}})` 拿原生分辨率持续流（长图必需）；**屏幕源**在部分环境下 MediaStream 不出帧，用 `snapshot()`（desktopCapturer 高分辨率 thumbnail 通道）更可靠
+- `startRegion` 流程：主进程隐藏主窗 → 整屏快照 → 主屏建全屏遮罩窗（加载 `plugin://<id>/<page>` 遮罩页，经 `getOverlayImage` 取冻屏画面）→ 拖框 → `finishRegion` 裁剪结果推回主窗 `onRegionResult`。遮罩窗/贴图窗均 `setContentProtection`，不会出现在后续截屏里
+- 多显示器 v1 仅支持主屏遮罩
+
+### window.api.pin — 截图贴图（置顶悬浮窗）
+
+```ts
+pin: {
+  show(p: { pluginId: string; page: string; dataUrl: string; width: number; height: number }): Promise<{ id; width; height }>
+  get(id): Promise<{ dataUrl: string } | null>
+  getBounds(id): Promise<Rectangle | null>
+  setBounds(p: { id; x?; y?; width?; height? }): Promise<Rectangle | null>
+  copy(id): Promise<{ ok: boolean; message?: string }>   // 主进程写系统剪贴板
+  close(id) / closeAll() / list()
+}
+```
+
+贴图窗无边框、置顶（screen-saver 级）、透明、不进任务栏，页面内容为插件的 `page`（如 `pin.html?pin=<id>`）；贴图为会话内有效（主进程内存），持久化由插件自行负责。注意：**不要**用 `-webkit-app-region: drag` 做整窗拖动（会吞掉页面全部鼠标事件），用 `getBounds/setBounds` 手动实现。
+
+### window.api.plugins.files — 插件文件存储
+
+```ts
+plugins.files: {
+  write(pluginId, name, bytes): Promise<{ name; size }>   // name 白名单 ^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$
+  list(pluginId): Promise<{ name; size; mtime }[]>
+  readDataUrl(pluginId, name): Promise<string>
+  read(pluginId, name): Promise<Uint8Array | null>
+  copyImage(pluginId, name): Promise<{ ok; message? }>    // 复制图片文件进系统剪贴板
+  delete(pluginId, name) / clear(pluginId)
+}
+```
+
+落盘 `userData/plugins/files/<插件id>/`：随插件覆盖安装不丢失、不受笔记附件 GC 影响、在数据同步备份范围内。适合截图历史等小体量二进制（KV 只放元数据，不要放大文件）。
+
+### AI 多模态（图片输入）
+
+`window.api.ai.chat` 的消息 `content` 支持 `string | [{type:'text',text}, {type:'image_url',image_url:{url: dataURI}}]`（网关按供应商协议自动转换：OpenAI chat 直通 / Responses input_image / Anthropic base64 image 块；system 消息仅文本）。流式接口仍只支持文本。
 
 ## 权限模型
 
