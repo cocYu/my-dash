@@ -5,6 +5,7 @@ import path from 'node:path'
 import { startBackend, stopBackend } from './backend'
 import { registerAttachmentsIpc, registerAttachmentsProtocol } from './attachments'
 import { registerAiIpc } from './ai/ipc'
+import { registerCaptureIpc } from './capture'
 import { registerExporterIpc } from './exporter'
 import { registerFileTransferIpc } from './file-transfer'
 import { createAppMenu } from './menu'
@@ -12,6 +13,8 @@ import { registerMdThemesIpc } from './md-themes'
 import { registerNotesImportIpc } from './notes-import'
 import { createTray, destroyTray, updateTrayMenu } from './tray'
 import { initPluginManager, registerPluginIpc, registerPluginProtocol } from './plugins/manager'
+import { registerPluginFilesIpc } from './plugins/files'
+import { registerPinIpc } from './pin'
 import { buildTestMessage, sendToChannel } from './notify/channels'
 import { readNotifyConfig, writeNotifyConfig } from './notify/config'
 import type { NotifyChannelId } from '../types/notify'
@@ -135,6 +138,10 @@ async function bootstrap(): Promise<void> {
   registerMdThemesIpc()
   registerAttachmentsIpc({ baseUrl: backendBaseUrl, token })
   registerAttachmentsProtocol()
+  // 桌面截屏与截图贴图：插件（screenshot-tool 等）经 window.api.capture / pin 使用
+  registerCaptureIpc(() => mainWindow)
+  registerPinIpc()
+  registerPluginFilesIpc(app.getPath('userData'))
   // AI 工作台（供应商配置加密落盘，网关层兼容 chat/responses/messages）
   // 工具层需要直连本机后端，传入 baseUrl 与访问令牌
   registerAiIpc({ baseUrl: backendBaseUrl, token })

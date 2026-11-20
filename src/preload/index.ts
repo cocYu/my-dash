@@ -137,6 +137,37 @@ export type MdImportResult =
   | { files: MdImportFile[] }
   | { tree: MdImportNode[] }
 
+/** 桌面截屏源（窗口/屏幕缩略图列表，供插件自绘选择器） */
+export interface CaptureSourceInfo {
+  id: string
+  name: string
+  type: 'screen' | 'window'
+  thumbnail: string
+  appIcon?: string
+}
+
+/** 图片字节落盘结果 */
+export interface SaveFileResult {
+  saved: boolean
+  filePath?: string
+}
+
+/** 插件文件存储条目元信息 */
+export interface PluginFileMeta {
+  name: string
+  size: number
+  mtime: string
+}
+
+/** 贴图悬浮窗展示参数 */
+export interface PinShowPayload {
+  pluginId: string
+  page: string
+  dataUrl: string
+  width: number
+  height: number
+}
+
 const api = {
   /** 获取 Go 后端的访问配置（baseUrl + 本会话随机 token）与运行时信息 */
   getBackendConfig: (): Promise<{
@@ -243,6 +274,22 @@ const api = {
       save: (list: PluginSourceConfig[]): Promise<PluginSourceConfig[]> =>
         ipcRenderer.invoke('plugins:sources:save', list),
       reset: (): Promise<PluginSourceConfig[]> => ipcRenderer.invoke('plugins:sources:reset')
+    },
+    /** 插件二进制文件存储（userData/plugins/files/<id>/，升级与附件 GC 均不影响） */
+    files: {
+      write: (pluginId: string, name: string, bytes: Uint8Array): Promise<{ name: string; size: number }> =>
+        ipcRenderer.invoke('plugins:files:write', { pluginId, name, bytes }),
+      list: (pluginId: string): Promise<PluginFileMeta[]> => ipcRenderer.invoke('plugins:files:list', pluginId),
+      readDataUrl: (pluginId: string, name: string): Promise<string> =>
+        ipcRenderer.invoke('plugins:files:read-data-url', { pluginId, name }),
+      read: (pluginId: string, name: string): Promise<Uint8Array | null> =>
+        ipcRenderer.invoke('plugins:files:read', { pluginId, name }),
+      /** 复制插件文件图片到系统剪贴板 */
+      copyImage: (pluginId: string, name: string): Promise<{ ok: boolean; message?: string }> =>
+        ipcRenderer.invoke('plugins:files:copy-image', { pluginId, name }),
+      delete: (pluginId: string, name: string): Promise<boolean> =>
+        ipcRenderer.invoke('plugins:files:delete', { pluginId, name }),
+      clear: (pluginId: string): Promise<boolean> => ipcRenderer.invoke('plugins:files:clear', pluginId)
     }
   },
   sync: {
@@ -355,6 +402,53 @@ const api = {
     /** PDF 导出：隐藏窗口渲染 HTML 后 printToPDF */
     savePdf: (payload: { defaultName: string; html: string }): Promise<{ saved: boolean; filePath?: string }> =>
       ipcRenderer.invoke('export:save-pdf', payload)
+  },
+  /** 桌面截屏：源枚举 / 全屏遮罩区域截图 / 图片落盘（插件截图类功能使用） */
+  capture: {
+    /** 枚举屏幕与窗口源（缩略图 dataURL） */
+    sources: (): Promise<CaptureSourceInfo[]> => ipcRenderer.invoke('capture:sources'),
+    /** 区域截图：主进程隐藏主窗 → 整屏快照 → 创建全屏遮罩窗展示选框 */
+    startRegion: (opts: { pluginId: string; page?: string }): Promise<{ ok: boolean }> =>
+      ipcRenderer.invoke('capture:start-region', { pluginId: opts.pluginId, page: opts.page ?? 'overlay.html' }),
+    /** 单帧快照（整屏或窗口，thumbnail 通道；屏幕源 MediaStream 不出帧的环境下更可靠） */
+    snapshot: (sourceId: string): Promise<{ dataUrl: string; width: number; height: number }> =>
+      ipcRenderer.invoke('capture:snapshot', sourceId),
+    /** 遮罩页取冻屏画面（仅遮罩窗自身可取） */
+    getOverlayImage: (): Promise<string | null> => ipcRenderer.invoke('capture:get-overlay-image'),
+    /** 遮罩页确认选框：携带裁剪结果关闭遮罩并还原主窗 */
+    finishRegion: (payload: { dataUrl: string }): Promise<void> =>
+      ipcRenderer.invoke('capture:finish-region', payload),
+    /** 遮罩页取消 */
+    cancelRegion: (): Promise<void> => ipcRenderer.invoke('capture:cancel-region'),
+    /** 区域截图结果推送到主窗渲染层（仅主窗会收到） */
+    onRegionResult: (cb: (payload: { dataUrl: string }) => void): (() => void) => {
+      const listener = (_e: unknown, payload: { dataUrl: string }): void => cb(payload)
+      ipcRenderer.on('capture:region-result', listener)
+      return () => ipcRenderer.removeListener('capture:region-result', listener)
+    },
+    /** 图片字节落盘：dir 给定直写，否则弹另存对话框 */
+    saveFile: (payload: { bytes: Uint8Array; ext?: string; dir?: string; defaultName?: string }): Promise<SaveFileResult> =>
+      ipcRenderer.invoke('capture:save-file', payload),
+    /** 系统对话框选择目录 */
+    chooseDir: (): Promise<{ dir: string } | null> => ipcRenderer.invoke('capture:choose-dir')
+  },
+  /** 截图贴图：把图片钉成无边框置顶悬浮窗（窗口由主进程管理，会话内有效） */
+  pin: {
+    /** 创建贴图窗（尺寸超屏自动等比缩小），返回贴图 id */
+    show: (payload: PinShowPayload): Promise<{ id: string; width: number; height: number }> =>
+      ipcRenderer.invoke('pin:show', payload),
+    /** 读取贴图内容（贴图页加载时取 dataUrl） */
+    get: (id: string): Promise<{ dataUrl: string } | null> => ipcRenderer.invoke('pin:get', id),
+    /** 读取贴图窗当前边界（贴图页手动拖动用） */
+    getBounds: (id: string): Promise<Electron.Rectangle | null> => ipcRenderer.invoke('pin:get-bounds', id),
+    /** 调整贴图窗位置与尺寸（滚轮缩放时由贴图页调用） */
+    setBounds: (payload: { id: string; x?: number; y?: number; width?: number; height?: number }): Promise<Electron.Rectangle | null> =>
+      ipcRenderer.invoke('pin:set-bounds', payload),
+    /** 复制贴图到系统剪贴板 */
+    copy: (id: string): Promise<{ ok: boolean; message?: string }> => ipcRenderer.invoke('pin:copy', id),
+    close: (id: string): Promise<void> => ipcRenderer.invoke('pin:close', id),
+    closeAll: (): Promise<void> => ipcRenderer.invoke('pin:close-all'),
+    list: (): Promise<{ id: string; bounds: Electron.Rectangle }[]> => ipcRenderer.invoke('pin:list')
   }
 }
 
