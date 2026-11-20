@@ -9,7 +9,7 @@ my-dash-plugins  ──tag vX.Y.Z──►  GitHub Actions  ──►  GitHub Re
                                     ├─ 回写 registry.json ─┤
                                     └─ 镜像 ─► Gitee Release（zip + registry）
                                                           │
-AtoZ 应用 ── 拉 registry.json（Gitee raw → jsDelivr → GitHub raw）── 下载 zip（Gitee → GitHub）── 安装
+AtoZ 应用 ── 聚合插件源（默认源：Gitee raw → jsDelivr → GitHub raw）── 下载 zip（downloadUrl → mirrors）── 安装
 ```
 
 ## 一、插件中心仓库结构
@@ -101,20 +101,41 @@ git push github v0.1.0      # GitHub（流水线跑在这里）
 
 | 位置 | 行为 |
 | --- | --- |
-| `src/main/plugins/manager.ts` | `DEFAULT_REGISTRY_URLS` 三源回退；`installRemote` 主地址 + `mirrors` 回退（最多 6 个），sha256 校验 |
-| `plugins:remote-list` | 返回 `{ source, entries }`，`source` 是实际生效的索引地址 |
-| `ToolMarketDialog.vue` | 记住自定义索引（localStorage）、显示当前来源与「含镜像」标记 |
-| 环境变量 | `MYDASH_TOOLS_REGISTRY=https://…/registry.json` 可临时覆盖默认索引（逗号分隔多源） |
+| `src/main/plugins/sources.ts` | 插件源配置：`userData/plugin-sources.json`，每条含 `id / name / url / mirrors / enabled` |
+| `src/main/plugins/manager.ts` | 聚合所有启用的源（源内仍按 主地址 → 备用地址 回退）；同 id 取版本最高；`installRemote` 支持 `mirrors` 回退（最多 6 个）+ sha256 校验 |
+| `plugins:remote-list` | 不传参聚合全部启用源 → `{ results, entries }`；传 `sourceIds` 只测指定源；传 `url` 只认该地址 |
+| 设置 → 插件 → 插件市场 | 搜索（名称/描述/分类/id）、分类过滤、安装/更新/重装；显示来源与不可用的源 |
+| 设置 → 插件 → 插件源 | 增删改、启停、单源「测试」、「恢复默认」 |
+| `ToolMarketDialog.vue` | 工具箱「获取插件」快捷入口，复用同一个市场组件 |
 
-默认索引：
+首次运行写入内置源「AtoZ 插件中心」（主地址 Gitee raw + 两个备用地址），之后以配置文件为准：
 
+```json
+// userData/plugin-sources.json
+{
+  "version": 1,
+  "sources": [
+    {
+      "id": "official",
+      "name": "AtoZ 插件中心",
+      "url": "https://gitee.com/yukai1998/my-dash-plugins/raw/main/registry.json",
+      "mirrors": [
+        "https://raw.githubusercontent.com/cocYu/my-dash-plugins/main/registry.json",
+        "https://cdn.jsdelivr.net/gh/cocYu/my-dash-plugins@main/registry.json"
+      ],
+      "enabled": true,
+      "builtin": true
+    },
+    { "id": "src-a1b2c3", "name": "团队内部", "url": "http://192.168.1.10:8080/registry.json", "mirrors": [], "enabled": true }
+  ]
+}
 ```
-https://gitee.com/yukai1998/my-dash-plugins/raw/main/registry.json
-https://cdn.jsdelivr.net/gh/cocYu/my-dash-plugins@main/registry.json
-https://raw.githubusercontent.com/cocYu/my-dash-plugins/main/registry.json
-```
 
-仓库改名或想自建索引时，改这三行即可；普通用户也可以在「获取工具」里填自定义地址。
+`MYDASH_TOOLS_REGISTRY`（逗号分隔）只在**首次生成**配置时替换内置源，之后请用界面维护。
+
+备用地址里 jsDelivr 排在 GitHub raw 之后是有意为之：它对 `@main` 有 12 小时边缘缓存，
+`purge.jsdelivr.net` 也不保证立刻生效（CI 里仍会主动清一次）。若排在 raw 前面，发布后的一段时间内
+可能用**旧索引**挡住后面的新索引，表现就是「包下载成功但 sha256 校验失败」。
 
 ## 六、安全边界
 
@@ -128,10 +149,10 @@ https://raw.githubusercontent.com/cocYu/my-dash-plugins/main/registry.json
 ## 七、FAQ
 
 **Q：插件版本改了，用户会收到更新吗？**
-A：会。索引里 `version` 变大后，「获取工具」显示「更新」按钮，点击覆盖安装，KV 与启停状态保留。
+A：会。索引里 `version` 变大后，插件市场显示「更新」按钮，点击覆盖安装，KV 与启停状态保留。
 
 **Q：能同时有多个索引吗？**
-A：内置的是多源回退（同一份索引的多个镜像）；自定义索引是单选。想做「官方 + 第三方」并存，需要扩展成索引数组，目前未做。
+A：可以。「设置 → 插件 → 插件源」里加多条即可，市场会把所有启用的源聚合起来：同一插件出现在多个源时取版本最高的一份（版本相同取靠前的源），下载时按该条目自己的 `downloadUrl` → `mirrors` 回退。单个源不可用不影响其它源，失败原因在市场上方提示。
 
 **Q：Gitee 没配 token 会怎样？**
 A：GitHub Release 与索引照常，Gitee 镜像跳过；应用会回退到 jsDelivr / GitHub raw，境内可能慢。

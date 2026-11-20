@@ -25,7 +25,7 @@
       </div>
       <div class="sidebar-foot">
         <el-button size="small" class="foot-btn" @click="marketOpen = true">
-          <el-icon><Shop /></el-icon>&nbsp;获取工具
+          <el-icon><Shop /></el-icon>&nbsp;获取插件
         </el-button>
       </div>
     </div>

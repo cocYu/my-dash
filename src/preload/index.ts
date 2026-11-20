@@ -78,6 +78,50 @@ export interface PluginInfo {
   error?: string
 }
 
+/** 插件源（插件市场索引地址），落盘 userData/plugin-sources.json */
+export interface PluginSourceConfig {
+  id: string
+  name: string
+  url: string
+  mirrors: string[]
+  enabled: boolean
+  builtin?: boolean
+}
+
+export interface RemoteRegistryEntryInfo {
+  id: string
+  name: string
+  version: string
+  description?: string
+  category?: string
+  downloadUrl: string
+  mirrors?: string[]
+  sha256?: string
+  size?: number
+}
+
+/** 单个源的拉取状态（失败带 error，不影响其它源） */
+export interface RemoteSourceStatus {
+  sourceId: string
+  sourceName: string
+  sourceUrl: string
+  ok: boolean
+  error?: string
+  entries: RemoteRegistryEntryInfo[]
+}
+
+/** 聚合后的市场条目：同 id 已按版本去重 */
+export interface RemoteMarketEntry extends RemoteRegistryEntryInfo {
+  sourceId: string
+  sourceName: string
+  sources: string[]
+}
+
+export interface RemoteListResponse {
+  results: RemoteSourceStatus[]
+  entries: RemoteMarketEntry[]
+}
+
 /** 导入 Markdown 的结果：用户取消 / 文件列表 / 目录树（含嵌套文件夹） */
 export interface MdImportFile {
   title: string
@@ -187,24 +231,19 @@ const api = {
       value?: unknown
     ): Promise<unknown> => ipcRenderer.invoke('plugins:kv', { pluginId, op, key, value }),
     uninstall: (id: string): Promise<unknown> => ipcRenderer.invoke('plugins:uninstall', id),
-    /** 远程工具索引（不传 url 用内置多源，返回实际生效的来源地址） */
-    remoteList: (url?: string): Promise<{
-      source: string
-      entries: Array<{
-        id: string
-        name: string
-        version: string
-        description?: string
-        category?: string
-        downloadUrl: string
-        mirrors?: string[]
-        sha256?: string
-        size?: number
-      }>
-    }> => ipcRenderer.invoke('plugins:remote-list', url),
+    /** 插件市场索引：默认聚合全部启用的插件源；url / sourceIds 用于临时地址与单源自检 */
+    remoteList: (opts?: { url?: string; sourceIds?: string[] }): Promise<RemoteListResponse> =>
+      ipcRenderer.invoke('plugins:remote-list', opts),
     /** 远程下载安装（主地址失败自动切镜像，可选 sha256 校验，覆盖升级） */
     installRemote: (payload: { url: string; mirrors?: string[]; sha256?: string }): Promise<unknown> =>
-      ipcRenderer.invoke('plugins:install-remote', payload)
+      ipcRenderer.invoke('plugins:install-remote', payload),
+    /** 插件源配置（多源，可增删改与启停） */
+    sources: {
+      list: (): Promise<PluginSourceConfig[]> => ipcRenderer.invoke('plugins:sources:list'),
+      save: (list: PluginSourceConfig[]): Promise<PluginSourceConfig[]> =>
+        ipcRenderer.invoke('plugins:sources:save', list),
+      reset: (): Promise<PluginSourceConfig[]> => ipcRenderer.invoke('plugins:sources:reset')
+    }
   },
   sync: {
     getConfig: (): Promise<unknown> => ipcRenderer.invoke('sync:get-config'),

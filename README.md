@@ -118,9 +118,11 @@ macOS 无法云端构建，而「主机管理」是付费能力，个人免费�
 **开发文档**：应用内「设置 → 插件 → 插件开发文档」可查阅完整开发指南（清单字段、PluginContext API、权限模型、打包分发、FAQ），文档源文件为 `src/renderer/src/plugins/plugin-dev-docs.md`。
 
 ### 安装方式
-- **插件中心**：工具箱 →「获取工具」，从 [my-dash-plugins](https://gitee.com/yukai1998/my-dash-plugins) 的远程索引一键安装/升级（主源 + 镜像自动回退，sha256 校验）
-- **zip 导入**：插件管理页 →「导入插件 (.zip)」（支持根目录或单层子目录打包）
+- **插件市场**：设置 → 插件 → 插件市场（或工具箱 →「获取插件」），从远程索引搜索并一键安装/升级（镜像回退 + sha256 校验）
+- **zip 导入**：插件管理页 →「导入 .zip」（支持根目录或单层子目录打包）
 - **目录放置**：正式插件放 `%APPDATA%/mydash/plugins/<id>/`；开发中的插件放仓库 `plugins-dev/<id>/`（仅 dev 模式扫描，dev 同名插件优先于已安装版本）
+
+插件源（远程索引地址）可配置多份：设置 → 插件 → 插件源，支持增删改、启停与单源测试。「已安装」「插件市场」「插件源」三块在窄窗口下会切换成卡片与换行布局。
 
 ### 插件中心（独立仓库 my-dash-plugins）
 
@@ -136,7 +138,8 @@ git tag -a v0.1.0 -m "插件中心 0.1.0" && git push origin v0.1.0 && git push 
 推送 `vX.Y.Z` 后由其 CI 打包 → 发 GitHub Release → 回写 `registry.json` → 镜像 Gitee。
 本仓库的 `plugins-dev/` 只是开发沙箱（内容已 gitignore），官方插件不放这里。
 
-应用侧索引按 Gitee raw → jsDelivr → GitHub raw 回退，下载按 `downloadUrl` → `mirrors` 回退。
+应用侧默认写入一份内置源（Gitee raw，备用 jsDelivr 与 GitHub raw），之后由用户在设置里增删；
+市场会聚合所有启用的源，同 id 取版本最高的一份，下载按该条目的 `downloadUrl` → `mirrors` 回退。
 完整流程与安全边界见 [`docs/plugin-registry.md`](docs/plugin-registry.md)。
 
 ### 插件清单 plugin.json
@@ -207,9 +210,9 @@ Element Plus 的 `html.dark` 基底。插件页面经 Element Plus 变量自动�
 
 ### 远程安装工具
 
-「工具箱 → 获取工具」或「设置 → 插件 → 从 URL 安装」：
+「设置 → 插件 → 插件市场」（或工具箱 →「获取插件」）浏览/搜索后一键安装，也可「从 URL 安装」直填 zip 地址：
 
-- **registry 索引**（`my-dash-plugins/registry.json`，内置三源回退，也可在界面填自定义地址）：
+- **registry 索引**（`my-dash-plugins/registry.json`；插件源可配置多份，每个源内部主地址 → 备用地址 回退）：
 
 ```json
 [

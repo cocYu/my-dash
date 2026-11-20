@@ -122,7 +122,7 @@
 
         <!-- 插件 -->
         <div v-show="active === 'plugins'" class="section">
-          <PluginSettingsPanel />
+          <PluginSettingsPanel v-model:tab="pluginTab" />
         </div>
 
         <!-- 数据同步 -->
@@ -141,6 +141,7 @@
 
 <script setup lang="ts">
 import { onMounted, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import { Bell, Box, Check, Brush, InfoFilled, SwitchButton, UploadFilled } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { applyTheme, getSavedThemeId, THEMES, type ThemeMeta } from '../theme'
@@ -150,8 +151,24 @@ import SyncSettingsPanel from '../components/SyncSettingsPanel.vue'
 import NotifySettingsPanel from '../components/NotifySettingsPanel.vue'
 
 type SectionId = 'general' | 'appearance' | 'plugins' | 'sync' | 'notify' | 'about'
+type PluginTab = 'installed' | 'market' | 'sources'
 
-const active = ref<SectionId>('general')
+const route = useRoute()
+const SECTION_IDS: SectionId[] = ['general', 'appearance', 'plugins', 'sync', 'notify', 'about']
+const PLUGIN_TABS: PluginTab[] = ['installed', 'market', 'sources']
+
+function pickSection(raw: unknown): SectionId | null {
+  const value = Array.isArray(raw) ? raw[0] : raw
+  return typeof value === 'string' && (SECTION_IDS as string[]).includes(value) ? (value as SectionId) : null
+}
+
+function pickPluginTab(raw: unknown): PluginTab | null {
+  const value = Array.isArray(raw) ? raw[0] : raw
+  return typeof value === 'string' && (PLUGIN_TABS as string[]).includes(value) ? (value as PluginTab) : null
+}
+
+const active = ref<SectionId>(pickSection(route.query.section) ?? 'general')
+const pluginTab = ref<PluginTab>(pickPluginTab(route.query.tab) ?? 'installed')
 const currentTheme = ref(getSavedThemeId())
 const appVersion = ref('')
 const userDataPath = ref('')
@@ -160,6 +177,17 @@ const openAtLogin = ref(false)
 const loginSwitching = ref(false)
 
 watch(currentTheme, (id) => applyTheme(id))
+
+// 深链：工具箱「获取工具」跳到 /settings?section=plugins&tab=market
+watch(
+  () => route.query,
+  (query) => {
+    const section = pickSection(query.section)
+    if (section) active.value = section
+    const tab = pickPluginTab(query.tab)
+    if (tab) pluginTab.value = tab
+  }
+)
 
 function onSectionSelect(id: string): void {
   active.value = id as SectionId
@@ -223,6 +251,7 @@ onMounted(async () => {
 .settings-page {
   height: 100%;
   overflow: hidden;
+  container-type: inline-size; /* 窄窗口时用容器查询把左栏折叠成顶部横向菜单 */
 }
 
 .settings-layout {
@@ -453,5 +482,42 @@ onMounted(async () => {
 .about-row .v.mono {
   font-size: 12px;
   word-break: break-all;
+}
+
+/* ---------------- 窄窗口（容器宽度而非视口：侧边栏折叠也能正确响应） ---------------- */
+@container (max-width: 680px) {
+  .settings-layout {
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  /* 左栏变为顶部横向标签条：放不下时换行，避免横向滚动把「关于」藏起来 */
+  .nav-panel {
+    width: 100%;
+    padding: 4px;
+    overflow: visible;
+  }
+
+  .settings-menu {
+    display: flex;
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+
+  .settings-menu :deep(.el-menu-item) {
+    height: 32px;
+    line-height: 32px;
+    padding: 0 10px;
+    flex: 0 0 auto;
+  }
+
+  .content-panel {
+    padding: 14px 14px 18px;
+  }
+
+  .theme-grid {
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  }
 }
 </style>

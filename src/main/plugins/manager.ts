@@ -8,6 +8,7 @@ import { createHash } from 'node:crypto'
 import fs from 'node:fs'
 import fsp from 'node:fs/promises'
 import path from 'node:path'
+import { listSources, registerPluginSourceIpc, type PluginSource } from './sources'
 
 export interface PluginManifest {
   id: string
@@ -59,10 +60,28 @@ export interface RemoteRegistryEntry {
   size?: number
 }
 
-export interface RemoteRegistryResult {
-  /** 实际生效的索引地址（多源回退后），便于界面提示来源 */
-  source: string
+/** 单个源的拉取结果：某个源不可用时只记录 error，不阻塞其它源 */
+export interface RemoteSourceResult {
+  sourceId: string
+  sourceName: string
+  /** 实际命中的地址（主地址或某个备用地址） */
+  sourceUrl: string
+  ok: boolean
+  error?: string
   entries: RemoteRegistryEntry[]
+}
+
+/** 聚合后的条目：带来源信息；同一 id 只保留版本最高的一条 */
+export interface RemoteEntry extends RemoteRegistryEntry {
+  sourceId: string
+  sourceName: string
+  /** 同一插件出现在多个源时的全部来源名 */
+  sources: string[]
+}
+
+export interface RemoteListResult {
+  results: RemoteSourceResult[]
+  entries: RemoteEntry[]
 }
 
 const ID_PATTERN = /^[a-z0-9][a-z0-9-]{1,63}$/
@@ -288,22 +307,9 @@ async function importZipBuffer(
 
 // ---------------- 远程安装 ----------------
 /**
- * 内置索引地址：插件中心仓库 my-dash-plugins（主源 Gitee raw，回退 jsDelivr 与 GitHub raw）。
- * 可用环境变量 MYDASH_TOOLS_REGISTRY 覆盖（逗号分隔），便于自建索引与本地调试。
+ * 索引地址由「设置 → 插件 → 插件源」维护（userData/plugin-sources.json，见 ./sources.ts）。
+ * 插件市场聚合所有启用的源：每个源内部仍按「主地址 → 备用地址」回退，单源失败不影响其它源。
  */
-const DEFAULT_REGISTRY_URLS = [
-  'https://gitee.com/yukai1998/my-dash-plugins/raw/main/registry.json',
-  'https://cdn.jsdelivr.net/gh/cocYu/my-dash-plugins@main/registry.json',
-  'https://raw.githubusercontent.com/cocYu/my-dash-plugins/main/registry.json'
-]
-
-function registrySources(): string[] {
-  const custom = (process.env.MYDASH_TOOLS_REGISTRY || '')
-    .split(',')
-    .map((s) => s.trim())
-    .filter(Boolean)
-  return custom.length ? custom : DEFAULT_REGISTRY_URLS
-}
 
 /** 带超时与体积上限的下载（Electron 主进程 Node 22 全局 fetch） */
 async function fetchWithLimits(url: string, timeoutMs: number, maxBytes: number): Promise<Buffer> {
@@ -350,23 +356,102 @@ function parseRegistry(buf: Buffer): RemoteRegistryEntry[] {
   })
 }
 
-/**
- * 拉取远程工具索引：不传 url 时按内置多源依次尝试（Gitee → jsDelivr → GitHub），
- * 传了 url 则只认该地址（界面里的自定义索引）。
- */
-async function fetchRemoteRegistry(url?: string): Promise<RemoteRegistryResult> {
-  const custom = (url ?? '').trim()
-  const candidates = custom ? [custom] : registrySources()
+/** 从单个源拉取索引：主地址失败时依次尝试 mirrors */
+async function fetchRegistryFromSource(src: PluginSource, timeoutMs = 8000): Promise<RemoteSourceResult> {
+  const candidates = [src.url, ...src.mirrors].filter(Boolean).slice(0, 6)
   const errors: string[] = []
   for (const target of candidates) {
     try {
-      const buf = await fetchWithLimits(target, 8000, 1 << 20)
-      return { source: target, entries: parseRegistry(buf) }
+      const buf = await fetchWithLimits(target, timeoutMs, 1 << 20)
+      return {
+        sourceId: src.id,
+        sourceName: src.name,
+        sourceUrl: target,
+        ok: true,
+        entries: parseRegistry(buf)
+      }
     } catch (err) {
       errors.push(`${target} → ${err instanceof Error ? err.message : String(err)}`)
     }
   }
-  throw new Error(`工具索引拉取失败（已尝试 ${candidates.length} 个源）：${errors.join('；')}`)
+  return {
+    sourceId: src.id,
+    sourceName: src.name,
+    sourceUrl: src.url,
+    ok: false,
+    error: errors.join('；'),
+    entries: []
+  }
+}
+
+function versionParts(version: string): number[] {
+  return version.split(/[.+-]/).map((seg) => {
+    const n = Number.parseInt(seg, 10)
+    return Number.isFinite(n) ? n : 0
+  })
+}
+
+/** 宽松的版本比较：逐段数字比较，缺段按 0 处理（1.2 == 1.2.0，1.10 > 1.9） */
+function compareVersion(a: string, b: string): number {
+  const x = versionParts(a)
+  const y = versionParts(b)
+  for (let i = 0; i < Math.max(x.length, y.length); i += 1) {
+    const diff = (x[i] ?? 0) - (y[i] ?? 0)
+    if (diff !== 0) return diff
+  }
+  return 0
+}
+
+/** 合并多源条目：同 id 取版本最高者，并记录全部来源 */
+function mergeEntries(results: RemoteSourceResult[]): RemoteEntry[] {
+  const byId = new Map<string, RemoteEntry>()
+  for (const res of results) {
+    for (const entry of res.entries) {
+      const prev = byId.get(entry.id)
+      if (!prev) {
+        byId.set(entry.id, {
+          ...entry,
+          sourceId: res.sourceId,
+          sourceName: res.sourceName,
+          sources: [res.sourceName]
+        })
+        continue
+      }
+      const sources = prev.sources.includes(res.sourceName) ? prev.sources : [...prev.sources, res.sourceName]
+      if (compareVersion(entry.version, prev.version) > 0) {
+        byId.set(entry.id, { ...entry, sourceId: res.sourceId, sourceName: res.sourceName, sources })
+      } else {
+        prev.sources = sources
+      }
+    }
+  }
+  return [...byId.values()].sort((a, b) => a.name.localeCompare(b.name, 'zh-Hans-CN'))
+}
+
+/**
+ * 拉取插件列表：
+ * - 传 url：只认该地址（单次临时索引）
+ * - 传 sourceIds：只查指定源（「测试」单个源，含已禁用的源）
+ * - 都不传：聚合全部启用的源
+ * 单源失败不抛错，结果里带 ok/error 交给界面展示；没有可用源时返回空列表。
+ */
+async function fetchRemoteRegistry(opts: { url?: string; sourceIds?: string[] } = {}): Promise<RemoteListResult> {
+  const custom = (opts.url ?? '').trim()
+  if (custom) {
+    const src: PluginSource = { id: 'custom', name: '自定义索引', url: custom, mirrors: [], enabled: true }
+    const res = await fetchRegistryFromSource(src)
+    if (!res.ok) throw new Error(`索引拉取失败：${res.error ?? '未知错误'}`)
+    return { results: [res], entries: mergeEntries([res]) }
+  }
+
+  const all = listSources()
+  const picked = opts.sourceIds?.length
+    ? all.filter((s) => opts.sourceIds?.includes(s.id))
+    : all.filter((s) => s.enabled)
+  if (!picked.length) return { results: [], entries: [] }
+
+  const results = await Promise.all(picked.map((src) => fetchRegistryFromSource(src)))
+  return { results, entries: mergeEntries(results) }
 }
 
 /**
@@ -498,8 +583,13 @@ export function registerPluginIpc(): void {
     return { id: manifest.id, name: manifest.name }
   })
 
-  // 远程工具索引（不传 url 时按内置多源依次回退）
-  ipcMain.handle('plugins:remote-list', (_e, url?: string) => fetchRemoteRegistry(url))
+  // 插件市场索引：默认聚合全部启用的源；url / sourceIds 用于单源自检
+  ipcMain.handle('plugins:remote-list', (_e, opts?: { url?: string; sourceIds?: string[] }) =>
+    fetchRemoteRegistry(opts ?? {})
+  )
+
+  // 插件源配置（多源，落盘 userData/plugin-sources.json）
+  registerPluginSourceIpc()
 
   // 远程下载安装（主地址 + 镜像回退，可选 sha256 校验，覆盖升级）
   ipcMain.handle(
