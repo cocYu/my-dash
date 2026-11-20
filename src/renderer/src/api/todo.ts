@@ -3,6 +3,9 @@ import { request } from './http'
 
 export type TodoStatus = 'open' | 'done' | 'closed'
 
+/** 重复规则类型：'' 不重复 / daily 每天 / weekly 每周 / monthly 每月 / custom 每 N 天 */
+export type RecType = '' | 'daily' | 'weekly' | 'monthly' | 'custom'
+
 export interface Todo {
   id: number
   category_id: number | null
@@ -15,12 +18,19 @@ export interface Todo {
   status: TodoStatus
   start_at: string | null
   due_at: string | null
-  /** 距截止时间多少分钟标记为「即将超时」；null 不提示 */
+  /** 距截止时间多少分钟标记为「即将超时」；null 不提示（旧单档字段，warn_offsets 为空时兜底） */
   warn_minutes: number | null
+  /** 多档提前提醒（分钟，升序）；空数组时退化用 warn_minutes */
+  warn_offsets: number[]
+  /** 重复规则（仅顶层待办生效，完成后自动生成下一期） */
+  rec_type: RecType
+  rec_interval: number
   sort: number
   completed_at: string | null
   created_at: string
   updated_at: string
+  /** 回收站：进入回收站的时间；null = 未删除 */
+  deleted_at: string | null
   tags: string[]
   sub_total: number
   sub_done: number
@@ -63,6 +73,30 @@ export function setTodoStatus(id: number, status: TodoStatus): Promise<Todo> {
 }
 export function deleteTodo(id: number): Promise<void> {
   return request<void>({ url: `/api/todos/${id}`, method: 'DELETE' })
+}
+
+// ---- 回收站 ----
+export function listTrash(): Promise<Todo[]> {
+  return request<Todo[]>({ url: '/api/todos/trash', method: 'GET' })
+}
+export function restoreTodo(id: number): Promise<void> {
+  return request<void>({ url: `/api/todos/${id}/restore`, method: 'POST' })
+}
+export function purgeTodo(id: number): Promise<void> {
+  return request<void>({ url: `/api/todos/${id}/purge`, method: 'POST' })
+}
+
+// ---- 批量 / 排序 ----
+export type BatchOp = 'done' | 'open' | 'closed' | 'category' | 'tags_add' | 'tags_remove' | 'delete'
+export function batchTodos(
+  ids: number[],
+  op: BatchOp,
+  payload?: { category_id?: number | null; tags?: string[] }
+): Promise<void> {
+  return request<void>({ url: '/api/todos/batch', method: 'POST', data: { ids, op, ...payload } })
+}
+export function sortTodos(ids: number[]): Promise<void> {
+  return request<void>({ url: '/api/todos/sort', method: 'POST', data: { ids } })
 }
 
 // ---- 评论 ----
@@ -167,4 +201,60 @@ export function toDateInput(iso: string | null): Date | null {
 }
 export function fromDateInput(d: Date | null): string | null {
   return d ? d.toISOString() : null
+}
+
+// ---- 多档提前提醒 ----
+
+/** 提前提醒档位预设（分钟） */
+export const WARN_OFFSET_PRESETS: { minutes: number; label: string }[] = [
+  { minutes: 30, label: '提前 30 分钟' },
+  { minutes: 60, label: '提前 1 小时' },
+  { minutes: 180, label: '提前 3 小时' },
+  { minutes: 720, label: '提前 12 小时' },
+  { minutes: 1440, label: '提前 1 天' },
+  { minutes: 2880, label: '提前 2 天' },
+  { minutes: 4320, label: '提前 3 天' },
+  { minutes: 10080, label: '提前 1 周' }
+]
+
+/** 分钟数 → 档位文案（任意自定义档位也能展示，如 45 → 「提前 45 分钟」） */
+export function warnOffsetLabel(minutes: number): string {
+  const hit = WARN_OFFSET_PRESETS.find((p) => p.minutes === minutes)
+  if (hit) return hit.label
+  if (minutes % 1440 === 0) return `提前 ${minutes / 1440} 天`
+  if (minutes % 60 === 0) return `提前 ${minutes / 60} 小时`
+  return `提前 ${minutes} 分钟`
+}
+
+/** 生效的提前提醒档位：warn_offsets 优先，为空退化用旧单档 warn_minutes */
+export function effectiveWarnOffsets(t: Pick<Todo, 'warn_offsets' | 'warn_minutes'>): number[] {
+  if (t.warn_offsets && t.warn_offsets.length > 0) return t.warn_offsets
+  if (t.warn_minutes != null && t.warn_minutes >= 0) return [t.warn_minutes]
+  return []
+}
+
+// ---- 重复规则 ----
+
+export const REC_TYPES: { value: RecType; label: string; hint: string }[] = [
+  { value: '', label: '不重复', hint: '' },
+  { value: 'daily', label: '每天', hint: '完成后创建明天的一期' },
+  { value: 'weekly', label: '每周', hint: '完成后创建下周同一时间的一期' },
+  { value: 'monthly', label: '每月', hint: '完成后创建下月同一时间的一期' },
+  { value: 'custom', label: '自定义间隔', hint: '完成后按天数间隔创建下一期' }
+]
+
+/** 重复规则的短文案（列表徽标用），如「每周」「每 3 天」 */
+export function recBadge(t: Pick<Todo, 'rec_type' | 'rec_interval'>): string {
+  switch (t.rec_type) {
+    case 'daily':
+      return '每天'
+    case 'weekly':
+      return '每周'
+    case 'monthly':
+      return '每月'
+    case 'custom':
+      return `每 ${t.rec_interval || 1} 天`
+    default:
+      return ''
+  }
 }

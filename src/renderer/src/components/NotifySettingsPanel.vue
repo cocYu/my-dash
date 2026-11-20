@@ -5,12 +5,23 @@
       <div class="block-title">提醒事件</div>
       <div class="switch-row">
         <el-switch v-model="cfg.enabled" />
-        <span class="switch-label">启用待办超时通知</span>
+        <span class="switch-label">启用待办通知</span>
       </div>
+      <el-checkbox v-model="cfg.notifyOnStart" :disabled="!cfg.enabled">开始提醒（到达开始时间时通知一次）</el-checkbox>
       <el-checkbox v-model="cfg.notifyOnSoon" :disabled="!cfg.enabled">即将超时提醒（进入「提前 X 分钟」窗口时通知一次）</el-checkbox>
       <el-checkbox v-model="cfg.notifyOnOverdue" :disabled="!cfg.enabled">已超时提醒（跨过截止时间时通知一次，不重复）</el-checkbox>
+      <div class="threshold-row">
+        <span class="threshold-label">外部渠道推送范围</span>
+        <el-select v-model="cfg.externalMinPriority" size="small" class="threshold-select" :disabled="!cfg.enabled">
+          <el-option :value="null" label="全部待办" />
+          <el-option v-for="p in THRESHOLD_OPTIONS" :key="p.value" :value="p.value" :label="p.label" />
+        </el-select>
+      </div>
       <div class="inline-hint">
-        仅在 AtoZ 运行期间检查（约每分钟一轮，启动时补发错过的提醒）。只有配置了截止时间且超时提醒不为「不提醒」的待办才会触发。
+        仅推送到企业微信 / 飞书 / 钉钉 / 邮箱的过滤条件；系统通知不受限制。如「仅 P0-P2」＝低优先级待办只发本机弹窗。
+      </div>
+      <div class="inline-hint">
+        仅在 AtoZ 运行期间检查（约每分钟一轮，启动时补发错过的提醒）。只有配置了相应时间且提醒未关闭的待办才会触发。
       </div>
     </div>
 
@@ -150,11 +161,21 @@ const testing = ref<Record<NotifyChannelId, boolean>>({
   email: false
 })
 
+/** 外部渠道推送阈值选项：仅优先级 ≤ 该值的待办推送到外部渠道 */
+const THRESHOLD_OPTIONS = [
+  { value: 0, label: '仅 P0（紧急）' },
+  { value: 1, label: 'P0 - P1' },
+  { value: 2, label: 'P0 - P2（高）' },
+  { value: 3, label: 'P0 - P3（中高）' }
+]
+
 function emptyConfig(): NotifyConfig {
   return {
     enabled: true,
     notifyOnSoon: true,
     notifyOnOverdue: true,
+    notifyOnStart: true,
+    externalMinPriority: null,
     system: { enabled: true },
     wecom: { enabled: false, webhook: '' },
     feishu: { enabled: false, webhook: '', secret: '' },
@@ -234,6 +255,21 @@ onMounted(fetchConfig)
 
 .secure-check {
   margin-left: 12px;
+}
+
+.threshold-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 6px 0;
+}
+
+.threshold-label {
+  font-size: 13px;
+}
+
+.threshold-select {
+  width: 170px;
 }
 
 .ch-actions {

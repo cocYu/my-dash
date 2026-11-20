@@ -45,9 +45,32 @@
         :clearable="true"
       />
       <label>超时提醒</label>
-      <el-select v-model="draft.warnChoice" size="small" :disabled="!draft.dueAt">
-        <el-option v-for="opt in WARN_OPTIONS" :key="opt.minutes" :value="opt.minutes" :label="opt.label" />
-      </el-select>
+      <div class="warn-cell">
+        <el-checkbox-group v-model="draft.warnOffsets" :disabled="!draft.dueAt" class="warn-group" size="small">
+          <el-checkbox v-for="opt in WARN_OFFSET_PRESETS" :key="opt.minutes" :value="opt.minutes" :label="opt.label" />
+        </el-checkbox-group>
+        <span v-if="draft.warnOffsets.length === 0" class="warn-none">{{ draft.dueAt ? '不提醒' : '先设置截止时间' }}</span>
+      </div>
+      <label>重复</label>
+      <div v-if="!isSubtask" class="rec-cell">
+        <el-select v-model="draft.recType" size="small" class="rec-select" placeholder="不重复">
+          <el-option v-for="r in REC_TYPES" :key="r.value" :value="r.value" :label="r.label" />
+        </el-select>
+        <template v-if="draft.recType === 'custom'">
+          <span class="rec-unit">每</span>
+          <el-input-number
+            v-model="draft.recInterval"
+            size="small"
+            :min="1"
+            :max="365"
+            controls-position="right"
+            class="rec-interval"
+          />
+          <span class="rec-unit">天重复一次</span>
+        </template>
+        <span v-else-if="draft.recType" class="rec-hint">{{ recHint }} · 完成或关闭后自动创建下一期</span>
+      </div>
+      <div v-else class="rec-cell rec-disabled">子任务不支持重复规则</div>
       <label>标签</label>
       <el-select
         v-model="draft.tags"
@@ -150,18 +173,22 @@ import {
   deleteComment,
   deleteTodo,
   dueState,
+  effectiveWarnOffsets,
   formatDue,
   listComments,
   PRIORITIES,
+  REC_TYPES,
   setTodoStatus,
   toDateInput,
   updateTodo,
+  type RecType,
   type Todo,
   type TodoCategory,
   type TodoComment,
   type TodoStatus,
   type TodoTag,
-  untilDueText
+  untilDueText,
+  WARN_OFFSET_PRESETS
 } from '../../api/todo'
 
 const props = defineProps<{
@@ -176,17 +203,6 @@ const emit = defineEmits<{
   deleted: [id: number]
 }>()
 
-const WARN_OPTIONS = [
-  { minutes: -1, label: '不提醒' },
-  { minutes: 60, label: '提前 1 小时' },
-  { minutes: 180, label: '提前 3 小时' },
-  { minutes: 720, label: '提前 12 小时' },
-  { minutes: 1440, label: '提前 1 天' },
-  { minutes: 2880, label: '提前 2 天' },
-  { minutes: 4320, label: '提前 3 天' },
-  { minutes: 10080, label: '提前 7 天' }
-]
-
 const draft = reactive({
   title: '',
   subtitle: '',
@@ -194,10 +210,15 @@ const draft = reactive({
   priority: 4,
   startAt: null as Date | null,
   dueAt: null as Date | null,
-  warnChoice: -1,
+  warnOffsets: [] as number[],
+  recType: '' as RecType,
+  recInterval: 1,
   tags: [] as string[],
   description: ''
 })
+
+const isSubtask = computed(() => props.todo?.parent_id != null)
+const recHint = computed(() => REC_TYPES.find((r) => r.value === draft.recType)?.hint ?? '')
 
 const newSubTitle = ref('')
 const newComment = ref('')
@@ -215,7 +236,9 @@ function seed(): void {
   draft.priority = t?.priority ?? 4
   draft.startAt = toDateInput(t?.start_at ?? null)
   draft.dueAt = toDateInput(t?.due_at ?? null)
-  draft.warnChoice = t?.warn_minutes ?? -1
+  draft.warnOffsets = t ? effectiveWarnOffsets(t) : []
+  draft.recType = t?.rec_type ?? ''
+  draft.recInterval = t?.rec_interval || 1
   draft.tags = [...(t?.tags ?? [])]
   draft.description = t?.description ?? ''
   comments.value = []
@@ -252,10 +275,13 @@ async function save(): Promise<void> {
   }
   if ((toDateInput(t.due_at) ?? null)?.getTime() !== (draft.dueAt ?? null)?.getTime()) {
     patch.due_at = draft.dueAt ? draft.dueAt.toISOString() : null
-    if (!draft.dueAt) draft.warnChoice = -1
+    if (!draft.dueAt) draft.warnOffsets = []
   }
-  const warn = draft.warnChoice === -1 ? null : draft.warnChoice
-  if (warn !== t.warn_minutes) patch.warn_minutes = warn
+  if (JSON.stringify([...draft.warnOffsets].sort((a, b) => a - b)) !== JSON.stringify(effectiveWarnOffsets(t))) {
+    patch.warn_offsets = [...draft.warnOffsets]
+  }
+  if (draft.recType !== t.rec_type) patch.rec_type = draft.recType
+  if (draft.recType !== '' && draft.recInterval !== t.rec_interval) patch.rec_interval = draft.recInterval
   if (JSON.stringify([...draft.tags].sort()) !== JSON.stringify([...t.tags].sort())) patch.tags = [...draft.tags]
   if (draft.description !== t.description) patch.description = draft.description
   if (Object.keys(patch).length === 0) return
@@ -285,14 +311,14 @@ async function remove(): Promise<void> {
   if (!t) return
   await ElMessageBox.confirm(
     t.sub_total > 0
-      ? `删除「${t.title}」将同时删除其 ${t.sub_total} 个子任务，且不可恢复。继续吗？`
-      : `确定删除待办「${t.title}」吗？其评论将一并删除。`,
-    '删除待办',
-    { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' }
+      ? `「${t.title}」及其 ${t.sub_total} 个子任务将移入回收站，30 天内可恢复。继续吗？`
+      : `确定把「${t.title}」移入回收站吗？30 天内可恢复，评论与标签一并保留。`,
+    '移入回收站',
+    { type: 'warning', confirmButtonText: '移入回收站', cancelButtonText: '取消' }
   )
   await deleteTodo(t.id)
   emit('deleted', t.id)
-  ElMessage.success('已删除')
+  ElMessage.success('已移入回收站')
 }
 
 // ---- 子任务 ----
@@ -450,6 +476,57 @@ const dueText = computed(() => {
 
 .meta-grid > label {
   font-size: 12.5px;
+  color: var(--ink-3);
+}
+
+.warn-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.warn-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 12px;
+}
+
+.warn-none {
+  font-size: 12px;
+  color: var(--ink-3);
+}
+
+.rec-cell {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.rec-cell :deep(.el-select) {
+  width: 130px;
+}
+
+.rec-cell.rec-disabled {
+  font-size: 12px;
+  color: var(--ink-3);
+}
+
+.rec-select {
+  flex: 0 0 120px;
+}
+
+.rec-unit {
+  font-size: 12.5px;
+  color: var(--ink-2);
+}
+
+.rec-interval {
+  width: 90px;
+}
+
+.rec-hint {
+  font-size: 11.5px;
   color: var(--ink-3);
 }
 
