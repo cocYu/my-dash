@@ -30,7 +30,7 @@ hello-tool/
 └── index.js       # ESM 入口（main 字段指定）
 ```
 
-开发期把插件目录放到仓库的 **`plugins-dev/`** 下（主进程会额外扫描该目录，同 id 时仓库版本优先），重启或「重载全部」即可加载。
+开发期把插件目录放到主应用的 **`plugins-dev/`** 下（该目录已 gitignore，主进程会额外扫描，同 id 时优先于已安装版本），重启或「重载全部」即可加载。
 
 ### 2. 编写清单 plugin.json
 
@@ -108,7 +108,7 @@ export function activate(ctx) {
 - **安装（zip）**：把插件目录压成 zip（`plugin.json` 在压缩包根目录，或唯一的一级子目录里）→ 「导入插件 (.zip)」
 - **安装（URL）**：托管一个 zip 下载地址 → 「从 URL 安装…」，同 id 已安装时执行**覆盖升级**
 
-完整两段式示例见仓库 `plugins-dev/hello-tool`（工具箱工具 + KV）与 `plugins-dev/notes-stats`（页面 + 仪表盘小组件 + HTTP 读数据）。
+完整两段式示例见插件中心 `plugins/hello-tool`（工具箱工具 + KV）与 `plugins/notes-stats`（页面 + 仪表盘小组件 + HTTP 读数据），仓库地址 `https://gitee.com/yukai1998/AtoZPlugins`。
 
 ## PluginContext API
 
@@ -251,21 +251,23 @@ events: {
 
 「从 URL 安装…」下载 zip 后**覆盖安装**（同 id 即升级，启停状态与安装时间保留）。可选 sha256 校验。
 
-### 发布到工具仓库（registry）
+### 发布到插件中心
 
-插件源码放在仓库 `plugins-dev/<id>/`，打包与索引由脚本自动完成（不要手写 registry）：
+官方插件统一放在独立仓库 **AtoZPlugins**（`plugins/<id>/`），打包与索引由它的脚本自动完成：
 
 ```bash
-# 只校验清单/入口；打包并生成索引
-node scripts/tools/build-tools.mjs --check
-node scripts/tools/build-tools.mjs --src plugins-dev --out dist-tools \
-  --tag tools/v0.1.0 --github-repo cocYu/my-dash --gitee-repo yukai1998/my-dash
+cd E:/project/electorn/AtoZPlugins
+npm run check        # 校验清单、入口、体积、符号链接
+npm run pack         # 产出 dist/*.zip 与 dist/registry.json
+git tag -a v0.1.0 -m "插件中心 0.1.0" && git push origin v0.1.0 && git push github v0.1.0
 ```
 
-推送 `tools/vX.Y.Z` tag 后，`.github/workflows/tools-release.yml` 会打包、发 Release、
-回写 `tools-registry/registry.json`，并在配置了 `GITEE_TOKEN` 时镜像到 Gitee。
+推送 `vX.Y.Z` 后由其 CI 打包、发 GitHub Release、回写 `registry.json`，配了 `GITEE_TOKEN` 时镜像到 Gitee。
 
-索引条目格式：
+本地调试：把插件目录放进主应用的 `plugins-dev/`（dev 模式扫描，内容已 gitignore），
+或在主应用里用「从 URL 安装」加载本地 zip。
+
+索引条目格式（脚本生成，不要手改）：
 
 ```json
 [
@@ -274,19 +276,19 @@ node scripts/tools/build-tools.mjs --src plugins-dev --out dist-tools \
     "name": "Hello 工具示例",
     "version": "0.2.0",
     "description": "…",
-    "category": "其他",
-    "downloadUrl": "https://gitee.com/<owner>/<repo>/releases/download/tools/v0.2.0/hello-tool-0.2.0.zip",
-    "mirrors": ["https://github.com/<owner>/<repo>/releases/download/tools/v0.2.0/hello-tool-0.2.0.zip"],
+    "category": "示例",
+    "downloadUrl": "https://gitee.com/yukai1998/AtoZPlugins/releases/download/v0.2.0/hello-tool-0.2.0.zip",
+    "mirrors": ["https://github.com/cocYu/AtoZPlugins/releases/download/v0.2.0/hello-tool-0.2.0.zip"],
     "sha256": "<zip 的 sha256>",
     "size": 1294
   }
 ]
 ```
 
-- `downloadUrl` 为主源，`mirrors` 在主源失败时依次回退
+- `downloadUrl` 为主源（默认 Gitee），`mirrors` 在主源失败时依次回退
 - `sha256` 必须与包一致，否则拒绝安装
 - 索引本身也有多源回退（Gitee raw → jsDelivr → GitHub raw），也可在界面填自定义地址
-- 完整流程见仓库 `docs/plugin-registry.md`
+- 完整流程见主应用仓库 `docs/plugin-registry.md`
 
 ## 生命周期与重载
 

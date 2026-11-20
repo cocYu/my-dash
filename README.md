@@ -118,23 +118,26 @@ macOS 无法云端构建，而「主机管理」是付费能力，个人免费�
 **开发文档**：应用内「设置 → 插件 → 插件开发文档」可查阅完整开发指南（清单字段、PluginContext API、权限模型、打包分发、FAQ），文档源文件为 `src/renderer/src/plugins/plugin-dev-docs.md`。
 
 ### 安装方式
-- **工具仓库**：工具箱 →「获取工具」，从远程索引一键安装/升级（主源 + 镜像自动回退，sha256 校验）
+- **插件中心**：工具箱 →「获取工具」，从 [AtoZPlugins](https://gitee.com/yukai1998/AtoZPlugins) 的远程索引一键安装/升级（主源 + 镜像自动回退，sha256 校验）
 - **zip 导入**：插件管理页 →「导入插件 (.zip)」（支持根目录或单层子目录打包）
 - **目录放置**：正式插件放 `%APPDATA%/mydash/plugins/<id>/`；开发中的插件放仓库 `plugins-dev/<id>/`（仅 dev 模式扫描，dev 同名插件优先于已安装版本）
 
-### 工具仓库（GitHub / Gitee 分发）
+### 插件中心（独立仓库 AtoZPlugins）
 
-推送 `tools/vX.Y.Z` tag 触发 `.github/workflows/tools-release.yml`：打包 `plugins-dev/` 下的插件 →
-上传 GitHub Release → 回写 `tools-registry/registry.json` → 镜像到 Gitee Release。
+插件源码、打包与发行都在 [AtoZPlugins](https://gitee.com/yukai1998/AtoZPlugins)（本机 `E:/project/electorn/AtoZPlugins`），
+与本仓库解耦，可独立发版：
 
 ```bash
-node scripts/tools/build-tools.mjs --check          # 只校验清单与入口
-npm run tools:pack                                   # 本地打包到 dist-tools/
-git tag -a tools/v0.1.0 -m "工具仓库 0.1.0" && git push origin tools/v0.1.0 && git push github tools/v0.1.0
+cd E:/project/electorn/AtoZPlugins
+npm run check                                  # 校验清单与入口
+git tag -a v0.1.0 -m "插件中心 0.1.0" && git push origin v0.1.0 && git push github v0.1.0
 ```
 
-索引与包都支持多源：应用侧按 Gitee raw → jsDelivr → GitHub raw 回退，下载按 `downloadUrl` →
-`mirrors` 回退。完整流程（独立仓库、签名、安全边界）见 [`docs/plugin-registry.md`](docs/plugin-registry.md)。
+推送 `vX.Y.Z` 后由其 CI 打包 → 发 GitHub Release → 回写 `registry.json` → 镜像 Gitee。
+本仓库的 `plugins-dev/` 只是开发沙箱（内容已 gitignore），官方插件不放这里。
+
+应用侧索引按 Gitee raw → jsDelivr → GitHub raw 回退，下载按 `downloadUrl` → `mirrors` 回退。
+完整流程与安全边界见 [`docs/plugin-registry.md`](docs/plugin-registry.md)。
 
 ### 插件清单 plugin.json
 ```json
@@ -153,7 +156,7 @@ git tag -a tools/v0.1.0 -m "工具仓库 0.1.0" && git push origin tools/v0.1.0 
 |-----|------|
 | `ctx.registerPage({ path, title, icon?, component })` | 注册页面：路由自动挂 `/p/<插件id>` 前缀，侧边栏自动出现入口 |
 | `ctx.registerWidget({ id, title, component })` | 注册仪表盘小组件卡片 |
-| `ctx.registerTool({ id, name, icon?, category?, description?, component })` | 注册工具箱工具：与内置工具混排（见 `plugins-dev/hello-tool/`） |
+| `ctx.registerTool({ id, name, icon?, category?, description?, component })` | 注册工具箱工具：与内置工具混排（见 [AtoZPlugins/plugins/hello-tool](https://gitee.com/yukai1998/AtoZPlugins/tree/main/plugins/hello-tool)） |
 | `ctx.http.get/post(url, data?)` | 受权限白名单约束的业务 API 调用（如 `notes:read` → `GET /api/notes*`） |
 | `ctx.storage.get/set/remove/keys` | 插件命名空间 KV（主进程按 id 落 JSON，重启保留） |
 | `ctx.vue` | Vue 常用 API（h/ref/computed/defineComponent/onMounted…，勿裸 import 'vue'） |
@@ -161,7 +164,7 @@ git tag -a tools/v0.1.0 -m "工具仓库 0.1.0" && git push origin tools/v0.1.0 
 | `ctx.events.on/emit` | 应用级事件总线 |
 | `ctx.log` | 带 `[plugin:<id>]` 前缀的日志 |
 
-完整示例见 [`plugins-dev/notes-stats/`](plugins-dev/notes-stats/)（页面 + 小组件 + 业务数据 + KV 全覆盖）。
+完整示例见 [AtoZPlugins/plugins/notes-stats](https://gitee.com/yukai1998/AtoZPlugins/tree/main/plugins/notes-stats)（页面 + 小组件 + 业务数据 + KV 全覆盖）。
 
 ### 设计边界
 - 主世界模型下插件可互访数据与页面 API，`permissions` 是**声明式约束而非硬安全边界**；未来分发不可信插件时演进为 iframe 沙箱（API 形态已按该方向收敛）
@@ -199,14 +202,14 @@ Element Plus 的 `html.dark` 基底。插件页面经 Element Plus 变量自动�
 - **Postman 网络通道**：渲染层受 CORS 限制，任意域请求统一走 Go 后端 `POST /api/tools/proxy`
   转发（默认 15s 超时、响应 10MB 上限、拒绝本机/内网目标防 SSRF）
 - **插件工具**：插件经 `ctx.registerTool({ id, name, icon?, category?, description?, component })`
-  注册工具，与内置工具混排展示（完整示例见 `plugins-dev/hello-tool/`）。插件可见的 Vue API 与
+  注册工具，与内置工具混排展示（完整示例见 [AtoZPlugins/plugins/hello-tool](https://gitee.com/yukai1998/AtoZPlugins/tree/main/plugins/hello-tool)）。插件可见的 Vue API 与
   Element Plus 组件白名单已扩充（ElTabs/ElSelect/ElForm/ElDatePicker 等）
 
 ### 远程安装工具
 
 「工具箱 → 获取工具」或「设置 → 插件 → 从 URL 安装」：
 
-- **registry 索引**（`tools-registry/registry.json`，默认指向仓库内置地址，可替换自建）：
+- **registry 索引**（`AtoZPlugins/registry.json`，内置三源回退，也可在界面填自定义地址）：
 
 ```json
 [
@@ -215,13 +218,15 @@ Element Plus 的 `html.dark` 基底。插件页面经 Element Plus 变量自动�
     "name": "Hello 工具示例",
     "version": "0.1.0",
     "description": "…",
-    "downloadUrl": "https://…/hello-tool-0.1.0.zip",
-    "sha256": "（可选，64 位十六进制；提供则安装时强校验）"
+    "downloadUrl": "https://gitee.com/…/hello-tool-0.1.0.zip",
+    "mirrors": ["https://github.com/…/hello-tool-0.1.0.zip"],
+    "sha256": "64 位十六进制（必填，安装时强校验）",
+    "size": 1294
   }
 ]
 ```
 
-- **安装流程**：下载 zip（≤20MB）→ sha256 校验（索引提供时）→ 原子覆盖落位（同 id 即升级，
+- **安装流程**：下载 zip（≤20MB，主源失败自动切镜像）→ sha256 校验 → 原子覆盖落位（同 id 即升级，
   保留启停状态）→ 重载插件 → 工具自动出现在工具箱
 - **安全边界**：沿用插件系统既有声明（主世界运行、权限为声明式约束），请仅安装可信来源的包
 

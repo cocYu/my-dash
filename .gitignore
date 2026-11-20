@@ -29,5 +29,6 @@ dist-publish*/
 # UI 走查截图
 .shots/
 
-# 工具仓库打包产物
-dist-tools/
+# 插件开发沙箱（官方插件在 AtoZPlugins 仓库）
+plugins-dev/*
+!plugins-dev/README.md

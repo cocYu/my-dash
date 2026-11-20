@@ -288,13 +288,13 @@ async function importZipBuffer(
 
 // ---------------- 远程安装 ----------------
 /**
- * 内置索引地址：主源 Gitee raw（国内直连快），回退 jsDelivr CDN 与 GitHub raw。
+ * 内置索引地址：插件中心仓库 AtoZPlugins（主源 Gitee raw，回退 jsDelivr 与 GitHub raw）。
  * 可用环境变量 MYDASH_TOOLS_REGISTRY 覆盖（逗号分隔），便于自建索引与本地调试。
  */
 const DEFAULT_REGISTRY_URLS = [
-  'https://gitee.com/yukai1998/my-dash/raw/main/tools-registry/registry.json',
-  'https://cdn.jsdelivr.net/gh/cocYu/my-dash@main/tools-registry/registry.json',
-  'https://raw.githubusercontent.com/cocYu/my-dash/main/tools-registry/registry.json'
+  'https://gitee.com/yukai1998/AtoZPlugins/raw/main/registry.json',
+  'https://cdn.jsdelivr.net/gh/cocYu/AtoZPlugins@main/registry.json',
+  'https://raw.githubusercontent.com/cocYu/AtoZPlugins/main/registry.json'
 ]
 
 function registrySources(): string[] {

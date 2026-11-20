@@ -1,128 +1,79 @@
-# 工具仓库：用 GitHub / Gitee 分发插件
+# 插件中心：用 GitHub / Gitee 分发插件
 
-> 目标：插件（工具箱工具 / 页面 / 仪表盘小组件）独立于主应用发版，用户在内置的「获取工具」里看到列表、一键安装与升级。
-
----
-
-## 一、已经具备的能力
-
-主应用这边不需要新的运行时机制，现有链路已经打通：
-
-| 能力 | 位置 |
-| --- | --- |
-| 插件清单校验、zip 导入、覆盖升级 | `src/main/plugins/manager.ts` |
-| 远程索引拉取（多源回退） | `plugins:remote-list` |
-| 下载安装（主地址 + 镜像，sha256 校验） | `plugins:install-remote` |
-| 界面「获取工具」 | `src/renderer/src/toolbox/ToolMarketDialog.vue` |
-| 示例插件 | `plugins-dev/hello-tool`、`plugins-dev/notes-stats` |
-
-缺的只是「把插件打成包、生成索引、发到 Release」这条流水线，本次已补齐。
-
-## 二、仓库怎么放：两种形态
-
-### 形态 A：与主应用同仓（默认，零额外配置）
+插件的源码、打包与发行都放在独立仓库 **`AtoZPlugins`**（本机 `E:\project\electorn\AtoZPlugins`），
+主应用只负责读取索引与安装。这样插件可以独立发版，不必跟着应用走 release。
 
 ```
-my-dash/
-├── plugins-dev/              # 插件源码（每个子目录一个插件）
-│   ├── hello-tool/
+AtoZPlugins  ──tag vX.Y.Z──►  GitHub Actions  ──►  GitHub Release（zip）
+                                    │                     │
+                                    ├─ 回写 registry.json ─┤
+                                    └─ 镜像 ─► Gitee Release（zip + registry）
+                                                          │
+AtoZ 应用 ── 拉 registry.json（Gitee raw → jsDelivr → GitHub raw）── 下载 zip（Gitee → GitHub）── 安装
+```
+
+## 一、插件中心仓库结构
+
+```
+AtoZPlugins/
+├── plugins/                    # 一个子目录一个插件
+│   ├── hello-tool/{plugin.json,index.js}
 │   └── notes-stats/
-├── tools-registry/
-│   └── registry.json         # 索引（CI 自动回写）
-└── .github/workflows/
-    └── tools-release.yml     # 工具发布流水线
+├── scripts/
+│   ├── build-tools.mjs         # 校验 + 打包 + 生成 registry.json
+│   └── publish-gitee.mjs       # 镜像到 Gitee Release
+├── .github/workflows/release.yml
+├── registry.json               # 索引（CI 回写，勿手改）
+└── dist/                       # 产物（gitignored）
 ```
 
-- 优点：不用建新仓库，插件与主应用同版本演进
-- 缺点：插件发布要动主仓的 `main`；外部贡献者 PR 会混在应用代码里
-- 适用：插件由你自己维护、数量少于 10 个
+## 二、加一个插件
 
-### 形态 B：独立工具仓库（插件多 / 接受社区贡献时推荐）
+1. 复制 `plugins/hello-tool` 为 `plugins/<id>`，改 `plugin.json`（`id` 发布后不要改）：
 
-新建一个仓库（如 `atoz-tools`），把 `plugins-dev/` 的内容放到它的 `plugins/` 下，并把
-`scripts/tools/`、`.github/workflows/tools-release.yml` 一并复制过去：
-
-```
-atoz-tools/
-├── plugins/
-│   └── json-schema/
-│       ├── plugin.json
-│       └── index.js
-├── registry.json             # 仓库根目录，raw 地址更短
-├── scripts/build-tools.mjs
-└── .github/workflows/tools-release.yml
+```json
+{
+  "id": "my-tool",
+  "name": "我的工具",
+  "version": "0.1.0",
+  "description": "一句话说明",
+  "category": "文本",
+  "main": "index.js",
+  "permissions": ["storage"]
+}
 ```
 
-然后只改两处：
-
-1. 打包命令里的 `--src plugins`、`--github-repo <你>/atoz-tools`、`--gitee-repo <你>/atoz-tools`
-2. 主应用 `src/main/plugins/manager.ts` 里的 `DEFAULT_REGISTRY_URLS` 指向新仓库
-
-用户也可以不更新应用：在「获取工具」的输入框里填自建索引地址，会记在本地（`localStorage`）。
-开发者还能用环境变量临时覆盖：`MYDASH_TOOLS_REGISTRY=https://.../registry.json npm run dev`。
-
-## 三、发一次工具版本
-
-### 1. 改版本号
-
-编辑 `plugins-dev/<id>/plugin.json` 的 `version`（语义化版本）。插件 id 不要改——升级靠 id 覆盖，
-改了就等于换一个插件（用户旧版本不会自动清理）。
-
-### 2. 本地校验 / 打包
+2. 写 `index.js`，导出 `activate(ctx)`，用 `ctx.registerTool / registerPage / registerWidget` 注册能力。
+   Vue 从 `ctx.vue` 取、Element Plus 从 `ctx.ui` 取，不要裸 import（打包后没有裸模块）。
+3. 本地校验与打包：
 
 ```bash
-# 只校验清单与入口文件
-node scripts/tools/build-tools.mjs --check
-
-# 本地打包（产物在 dist-tools/，地址指向 tools/v0.1.0 的 Release）
-node scripts/tools/build-tools.mjs \
-  --src plugins-dev --out dist-tools \
-  --tag tools/v0.1.0 \
-  --github-repo cocYu/my-dash \
-  --gitee-repo yukai1998/my-dash
+cd E:/project/electorn/AtoZPlugins
+npm install
+npm run check     # 校验清单、入口、体积、符号链接
+npm run pack      # 产物在 dist/
 ```
 
-产物：
+4. 本地调试：把插件目录放进主应用的 `plugins-dev/`（dev 模式扫描，内容已 gitignore），
+   主应用「设置 → 插件 → 重载全部」。
 
-```
-dist-tools/
-├── hello-tool-0.1.0.zip     # plugin.json 在包根目录
-├── notes-stats-0.1.0.zip
-├── registry.json            # 应用读取的索引
-└── release-notes.md         # Release 正文
-```
-
-打包是**可复现**的（zip 内时间戳固定），同样的源文件两次打包 sha256 一致，便于校验。
-
-### 3. 打 tag 触发发布
+## 三、发布
 
 ```bash
-git tag -a tools/v0.1.0 -m "工具仓库 0.1.0"
-git push origin tools/v0.1.0        # Gitee
-git push github tools/v0.1.0        # GitHub（流水线跑在这里）
+git tag -a v0.1.0 -m "插件中心 0.1.0"
+git push origin v0.1.0      # Gitee
+git push github v0.1.0      # GitHub（流水线跑在这里）
 ```
 
-流水线 `.github/workflows/tools-release.yml` 会：
+流水线（`AtoZPlugins/.github/workflows/release.yml`）：
 
-1. 校验并打包 `plugins-dev/` 下所有插件
-2. 创建 / 复用 GitHub Release `tools/v0.1.0`，上传 zip（`--clobber` 可重跑）
-3. 把 `registry.json` 回写到 `main`（Gitee 与 GitHub raw 立即可读）
-4. 若配置了 `GITEE_TOKEN`：把 `main` 与 tag 推到 Gitee，并上传 zip 到 Gitee Release
+1. `npm ci` → 校验并打包 `plugins/`，生成 `registry.json`
+2. 创建/复用 GitHub Release，上传 `dist/*.zip`
+3. 把 `registry.json` 提交回 `main`
+4. 配了 `GITEE_TOKEN` 时：推 `main` + tag 到 Gitee，并上传 zip 到 Gitee Release
 
-也可以在 Actions 页面手动运行（填已存在的 tag，可只发布指定插件）。
-
-### 4. 验证
-
-```bash
-# 索引能读到、字段正确
-curl -s https://gitee.com/yukai1998/my-dash/raw/main/tools-registry/registry.json
-
-# 包能下、哈希一致
-curl -L -o /tmp/t.zip https://github.com/cocYu/my-dash/releases/download/tools/v0.1.0/hello-tool-0.1.0.zip
-sha256sum /tmp/t.zip
-```
-
-应用里：工具箱 → 获取工具 → 看到列表 → 安装/更新。
+首次发布前需要在 GitHub 仓库加 `GITEE_TOKEN`（Gitee 私人令牌，勾 `projects`）；
+仓库路径不是 `yukai1998/AtoZPlugins` 时，用仓库变量 `GITEE_REPO` 覆盖。
 
 ## 四、索引格式
 
@@ -133,43 +84,57 @@ sha256sum /tmp/t.zip
     "name": "Hello 工具示例",
     "version": "0.1.0",
     "description": "…",
-    "category": "其他",
-    "downloadUrl": "https://gitee.com/<owner>/<repo>/releases/download/tools/v0.1.0/hello-tool-0.1.0.zip",
-    "mirrors": ["https://github.com/<owner>/<repo>/releases/download/tools/v0.1.0/hello-tool-0.1.0.zip"],
+    "category": "示例",
+    "downloadUrl": "https://gitee.com/yukai1998/AtoZPlugins/releases/download/v0.1.0/hello-tool-0.1.0.zip",
+    "mirrors": ["https://github.com/cocYu/AtoZPlugins/releases/download/v0.1.0/hello-tool-0.1.0.zip"],
     "sha256": "8dd364b8…",
     "size": 1294
   }
 ]
 ```
 
-- `downloadUrl` 主源（默认 Gitee，境内直连快），`mirrors` 依次回退（最多取 5 个），任意一个成功即安装
-- 想反过来（GitHub 主源）打包时加 `--primary github`
-- `sha256` 强烈建议保留：索引与包不一致时会拒绝安装
-- `size` 仅用于展示，可省略
-- 索引地址本身有多源回退：Gitee raw → jsDelivr → GitHub raw（顺序在 `manager.ts` 里）
+- 默认 **Gitee 主源、GitHub 镜像**（`--primary github` 可反转），任一可用即安装
+- `sha256` 必填，下载后校验，不匹配直接拒绝
+- 打包可复现：zip 内时间戳固定，同样的源文件两次打包 sha256 一致
 
-## 五、安全边界
+## 五、主应用这一侧
 
-插件运行在**渲染层主世界**，与主应用同一个 JS 上下文，`permissions` 只是声明式约束，不是硬沙箱。因此：
+| 位置 | 行为 |
+| --- | --- |
+| `src/main/plugins/manager.ts` | `DEFAULT_REGISTRY_URLS` 三源回退；`installRemote` 主地址 + `mirrors` 回退（最多 6 个），sha256 校验 |
+| `plugins:remote-list` | 返回 `{ source, entries }`，`source` 是实际生效的索引地址 |
+| `ToolMarketDialog.vue` | 记住自定义索引（localStorage）、显示当前来源与「含镜像」标记 |
+| 环境变量 | `MYDASH_TOOLS_REGISTRY=https://…/registry.json` 可临时覆盖默认索引（逗号分隔多源） |
 
-1. **只发布 / 只安装可信来源**，索引仓库的写权限等同于所有用户的执行权限
-2. 索引与包都走 https，`sha256` 防篡改但不防「索引本身被换掉」——仓库被入侵时哈希也会被改
-3. 需要更强保证时，下一步可以做 **registry 签名**：用 Ed25519 对 `registry.json` 签名，应用内置公钥校验；这需要主进程引入签名校验，属于后续增强
-4. 上架前人工过一遍：`plugin.json` 的 `permissions` 是否合理、入口有没有 `eval` / 远程脚本加载
+默认索引：
 
-## 六、常见问题
+```
+https://gitee.com/yukai1998/AtoZPlugins/raw/main/registry.json
+https://cdn.jsdelivr.net/gh/cocYu/AtoZPlugins@main/registry.json
+https://raw.githubusercontent.com/cocYu/AtoZPlugins/main/registry.json
+```
 
-**Q：`tools/v0.1.0` 和主应用的 `release/v0.1.0` 会冲突吗？**
-A：不会，两条流水线用不同 tag 前缀，互不触发。工具版本号与主应用版本号也不需要对齐。
+仓库改名或想自建索引时，改这三行即可；普通用户也可以在「获取工具」里填自定义地址。
 
-**Q：只想发某一个插件？**
-A：改它的 `version` 后打新 tag，或在 Actions 手动运行时填 `plugins=hello-tool`。
+## 六、安全边界
 
-**Q：不配置 `GITEE_TOKEN` 会怎样？**
-A：GitHub Release 与索引照常；Gitee 镜像跳过。应用拉索引时会自动回退到 jsDelivr / GitHub raw，但境内下载可能慢。
+插件运行在渲染层主世界（与主应用同一个 JS 上下文），`permissions` 是声明式约束、**不是沙箱**。
+插件中心的写权限等同于所有用户的执行权限：
 
-**Q：插件包多大合适？**
-A：脚本限制单插件 10MB（zip 前源文件总和）。插件会随数据同步备份，别塞大资源。
+- 只合并可信 PR，重点审 `eval`、动态远程脚本、越权数据访问
+- 包体积上限 10MB（脚本强制），插件会随数据同步备份
+- `sha256` 防包被篡改，防不了索引被替换；需要更强保证可加 registry 的 Ed25519 签名（待做）
 
-**Q：Gitee 单附件 100MB 限制？**
-A：插件包远小于该限制，不涉及分卷（主应用安装包才需要）。
+## 七、FAQ
+
+**Q：插件版本改了，用户会收到更新吗？**
+A：会。索引里 `version` 变大后，「获取工具」显示「更新」按钮，点击覆盖安装，KV 与启停状态保留。
+
+**Q：能同时有多个索引吗？**
+A：内置的是多源回退（同一份索引的多个镜像）；自定义索引是单选。想做「官方 + 第三方」并存，需要扩展成索引数组，目前未做。
+
+**Q：Gitee 没配 token 会怎样？**
+A：GitHub Release 与索引照常，Gitee 镜像跳过；应用会回退到 jsDelivr / GitHub raw，境内可能慢。
+
+**Q：插件包很大可以吗？**
+A：脚本限制单插件 10MB（zip 前源文件总和）。插件会进数据同步备份，别放大型资源。
