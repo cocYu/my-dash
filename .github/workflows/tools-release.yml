@@ -1,0 +1,101 @@
+name: Tools Release
+
+# 工具仓库发布：推送 tools/vX.Y.Z tag（或手动运行）→ 打包插件 zip →
+# 上传到 GitHub Release → 回写 tools-registry/registry.json → 镜像到 Gitee。
+# 与主应用的 release/** 流水线互不影响，工具可以独立升级。
+on:
+  push:
+    tags:
+      - 'tools/**'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: '发布标签（必须已存在，如 tools/v0.1.0）'
+        required: true
+      plugins:
+        description: '只发布指定插件（逗号分隔，留空=全部）'
+        required: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: tools-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  # tag 触发用 ref_name，手动触发用输入值
+  TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+  GITEE_REPO: yukai1998/my-dash
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      # 未配置时跳过 Gitee 镜像；应用侧会自动回退到 jsDelivr / GitHub raw
+      GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # 需要完整历史：回写索引后要 push main，镜像时还要推 tag
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: 安装打包依赖
+        # 只需要 adm-zip（生产依赖），跳过 devDependencies 与 postinstall
+        run: npm ci --omit=dev --ignore-scripts --no-audit --no-fund
+
+      - name: 打包并生成索引
+        run: |
+          set -euo pipefail
+          extra=""
+          if [ -n "${{ inputs.plugins }}" ]; then extra="--only ${{ inputs.plugins }}"; fi
+          node scripts/tools/build-tools.mjs \
+            --src plugins-dev \
+            --out dist-tools \
+            --tag "$TAG" \
+            --github-repo "$GITHUB_REPOSITORY" \
+            --gitee-repo "$GITEE_REPO" \
+            $extra
+
+      - name: 发布到 GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh release view "$TAG" >/dev/null 2>&1 || \
+            gh release create "$TAG" \
+              --title "工具仓库 ${TAG#tools/}" \
+              --notes-file dist-tools/release-notes.md
+          gh release upload "$TAG" dist-tools/*.zip --clobber
+
+      - name: 回写索引到 main
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # 切到最新 main 再改索引，避免 tag 落后于 main 时把索引写回旧提交
+          git fetch origin main
+          git checkout -B main origin/main
+          cp dist-tools/registry.json tools-registry/registry.json
+          git add tools-registry/registry.json
+          if git diff --cached --quiet; then
+            echo "索引无变化，跳过提交"
+          else
+            git commit -m "chore(tools): 更新工具索引 ${TAG}"
+            git push origin main
+          fi
+
+      - name: 镜像到 Gitee
+        if: env.GITEE_TOKEN != ''
+        run: |
+          set -euo pipefail
+          remote="https://oauth2:${GITEE_TOKEN}@gitee.com/${GITEE_REPO}.git"
+          git push "$remote" main
+          git push "$remote" "refs/tags/${TAG}"
+          node scripts/tools/publish-gitee.mjs --tag "$TAG" --dir dist-tools

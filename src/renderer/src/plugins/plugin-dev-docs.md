@@ -253,7 +253,19 @@ events: {
 
 ### 发布到工具仓库（registry）
 
-仓库内置索引地址 `tools-registry/registry.json`（Gitee 仓库内维护），条目格式：
+插件源码放在仓库 `plugins-dev/<id>/`，打包与索引由脚本自动完成（不要手写 registry）：
+
+```bash
+# 只校验清单/入口；打包并生成索引
+node scripts/tools/build-tools.mjs --check
+node scripts/tools/build-tools.mjs --src plugins-dev --out dist-tools \
+  --tag tools/v0.1.0 --github-repo cocYu/my-dash --gitee-repo yukai1998/my-dash
+```
+
+推送 `tools/vX.Y.Z` tag 后，`.github/workflows/tools-release.yml` 会打包、发 Release、
+回写 `tools-registry/registry.json`，并在配置了 `GITEE_TOKEN` 时镜像到 Gitee。
+
+索引条目格式：
 
 ```json
 [
@@ -262,16 +274,19 @@ events: {
     "name": "Hello 工具示例",
     "version": "0.2.0",
     "description": "…",
-    "category": "示例",
-    "downloadUrl": "https://…/hello-tool-0.2.0.zip",
-    "sha256": "<zip 的 sha256，可选但强烈建议>"
+    "category": "其他",
+    "downloadUrl": "https://gitee.com/<owner>/<repo>/releases/download/tools/v0.2.0/hello-tool-0.2.0.zip",
+    "mirrors": ["https://github.com/<owner>/<repo>/releases/download/tools/v0.2.0/hello-tool-0.2.0.zip"],
+    "sha256": "<zip 的 sha256>",
+    "size": 1294
   }
 ]
 ```
 
-- 用户在「工具箱 → 远程安装」里拉取该索引一键安装；索引支持在界面里填自定义 URL 覆盖
-- 生成 sha256：`certutil -hashfile hello-tool-0.2.0.zip SHA256`（Windows）或 `shasum -a 256 <file>`（macOS/Linux）
-- 索引与包版本不一致时（升级后），更新 registry 里的 `version` / `downloadUrl` / `sha256` 即可
+- `downloadUrl` 为主源，`mirrors` 在主源失败时依次回退
+- `sha256` 必须与包一致，否则拒绝安装
+- 索引本身也有多源回退（Gitee raw → jsDelivr → GitHub raw），也可在界面填自定义地址
+- 完整流程见仓库 `docs/plugin-registry.md`
 
 ## 生命周期与重载
 

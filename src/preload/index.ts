@@ -187,10 +187,23 @@ const api = {
       value?: unknown
     ): Promise<unknown> => ipcRenderer.invoke('plugins:kv', { pluginId, op, key, value }),
     uninstall: (id: string): Promise<unknown> => ipcRenderer.invoke('plugins:uninstall', id),
-    /** 远程工具索引（不传 url 用仓库内置地址） */
-    remoteList: (url?: string): Promise<unknown> => ipcRenderer.invoke('plugins:remote-list', url),
-    /** 远程下载安装（可选 sha256 校验，覆盖升级） */
-    installRemote: (payload: { url: string; sha256?: string }): Promise<unknown> =>
+    /** 远程工具索引（不传 url 用内置多源，返回实际生效的来源地址） */
+    remoteList: (url?: string): Promise<{
+      source: string
+      entries: Array<{
+        id: string
+        name: string
+        version: string
+        description?: string
+        category?: string
+        downloadUrl: string
+        mirrors?: string[]
+        sha256?: string
+        size?: number
+      }>
+    }> => ipcRenderer.invoke('plugins:remote-list', url),
+    /** 远程下载安装（主地址失败自动切镜像，可选 sha256 校验，覆盖升级） */
+    installRemote: (payload: { url: string; mirrors?: string[]; sha256?: string }): Promise<unknown> =>
       ipcRenderer.invoke('plugins:install-remote', payload)
   },
   sync: {

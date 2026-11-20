@@ -28,3 +28,6 @@ dist-publish*/
 
 # UI 走查截图
 .shots/
+
+# 工具仓库打包产物
+dist-tools/

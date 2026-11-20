@@ -4,9 +4,16 @@
 <template>
   <el-dialog v-model="visible" title="获取工具" width="640px" :close-on-click-modal="false" @open="fetchList">
     <div class="src-row">
-      <el-input v-model="registryUrl" placeholder="registry 索引地址（JSON）" size="small" clearable />
+      <el-input
+        v-model="registryUrl"
+        placeholder="自定义索引地址（留空使用内置多源：Gitee → jsDelivr → GitHub）"
+        size="small"
+        clearable
+      />
       <el-button size="small" :loading="loading" @click="fetchList">刷新</el-button>
+      <el-button size="small" text :disabled="!registryUrl" @click="resetRegistry">默认</el-button>
     </div>
+    <div v-if="sourceLabel" class="src-hint">当前索引：{{ sourceLabel }}</div>
 
     <el-table :data="entries" v-loading="loading" size="small" max-height="360" empty-text="索引为空或未加载">
       <el-table-column label="工具" min-width="170">
@@ -19,6 +26,13 @@
         <template #default="{ row }">
           <div class="t-ver">远程 v{{ row.version }}</div>
           <div v-if="installedMap[row.id]" class="t-ver dim">本地 v{{ installedMap[row.id].version }}</div>
+          <el-tooltip
+            v-if="row.mirrors?.length"
+            :content="`备用下载源 ${row.mirrors.length} 个：主地址失败时自动切换`"
+            placement="top"
+          >
+            <span class="t-mirror">含镜像</span>
+          </el-tooltip>
         </template>
       </el-table-column>
       <el-table-column label="校验" width="80">
@@ -42,7 +56,8 @@
     </el-table>
 
     <div class="foot-hint">
-      工具包为 AtoZ 插件（主世界运行，权限为声明式约束），仅安装可信来源。安装来源 registry 默认指向仓库内置地址，可替换为自建索引。
+      工具包为 AtoZ 插件（主世界运行，权限为声明式约束），仅安装可信来源。索引默认按
+      Gitee → jsDelivr → GitHub 顺序自动回退，下载同样支持镜像切换。
     </div>
   </el-dialog>
 </template>
@@ -58,18 +73,27 @@ interface RemoteEntry {
   description?: string
   category?: string
   downloadUrl: string
+  mirrors?: string[]
   sha256?: string
+  size?: number
 }
 
 const visible = defineModel<boolean>({ default: false })
 
-/** 仓库内置 registry；可替换为自建索引 */
-const DEFAULT_REGISTRY_URL = 'https://gitee.com/yukai1998/my-dash/raw/main/tools-registry/registry.json'
-const registryUrl = ref('')
+/** 自定义索引地址记忆到本地：换设备 / 重装后仍指向自建仓库 */
+const STORAGE_KEY = 'mydash:tools-registry'
+const registryUrl = ref(localStorage.getItem(STORAGE_KEY) || '')
+const source = ref('')
 const loading = ref(false)
 const entries = ref<RemoteEntry[]>([])
 const installing = ref('')
 const installedMap = ref<Record<string, { version: string }>>({})
+
+/** 展示用：去掉协议头，过长时截断 */
+const sourceLabel = computed(() => {
+  const text = source.value.replace(/^https?:\/\//, '')
+  return text.length > 72 ? `${text.slice(0, 72)}…` : text
+})
 
 async function refreshInstalled(): Promise<void> {
   const list = (await window.api.plugins.list()) as Array<{ id: string; version: string; source: string }>
@@ -78,17 +102,28 @@ async function refreshInstalled(): Promise<void> {
 
 async function fetchList(): Promise<void> {
   loading.value = true
+  const custom = registryUrl.value.trim()
   try {
-    const [remote, ] = await Promise.all([
-      window.api.plugins.remoteList(registryUrl.value.trim() || undefined) as Promise<RemoteEntry[]>,
-      refreshInstalled()
-    ])
-    entries.value = remote
+    const res = await window.api.plugins.remoteList(custom || undefined)
+    entries.value = res.entries
+    source.value = res.source
+    // 只有自定义地址才持久化，内置多源不写死，便于以后调整顺序
+    if (custom) localStorage.setItem(STORAGE_KEY, custom)
+    else localStorage.removeItem(STORAGE_KEY)
+    await refreshInstalled()
   } catch (err) {
+    entries.value = []
+    source.value = ''
     ElMessage.error(`拉取工具索引失败：${err instanceof Error ? err.message : String(err)}`)
   } finally {
     loading.value = false
   }
+}
+
+function resetRegistry(): void {
+  registryUrl.value = ''
+  localStorage.removeItem(STORAGE_KEY)
+  void fetchList()
 }
 
 function actionOf(row: RemoteEntry): { label: string; type: 'primary' | 'warning' | 'info' } {
@@ -102,7 +137,11 @@ function actionOf(row: RemoteEntry): { label: string; type: 'primary' | 'warning
 async function install(row: RemoteEntry): Promise<void> {
   installing.value = row.id
   try {
-    await window.api.plugins.installRemote({ url: row.downloadUrl, sha256: row.sha256 || undefined })
+    await window.api.plugins.installRemote({
+      url: row.downloadUrl,
+      mirrors: row.mirrors,
+      sha256: row.sha256 || undefined
+    })
     ElMessage.success(`已安装 ${row.name} v${row.version}`)
     await refreshInstalled()
     // 重载插件：新工具注册进工具箱
@@ -125,6 +164,25 @@ async function install(row: RemoteEntry): Promise<void> {
 
 .src-row .el-input {
   flex: 1;
+}
+
+.src-hint {
+  margin: -6px 0 10px;
+  font-size: 11.5px;
+  color: var(--ink-3);
+  word-break: break-all;
+}
+
+.t-mirror {
+  display: inline-block;
+  margin-top: 2px;
+  padding: 0 5px;
+  font-size: 10.5px;
+  line-height: 16px;
+  border-radius: 4px;
+  color: var(--ink-3);
+  background: var(--fill-subtle);
+  border: 1px solid var(--divider);
 }
 
 .t-name {

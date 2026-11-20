@@ -118,8 +118,23 @@ macOS 无法云端构建，而「主机管理」是付费能力，个人免费�
 **开发文档**：应用内「设置 → 插件 → 插件开发文档」可查阅完整开发指南（清单字段、PluginContext API、权限模型、打包分发、FAQ），文档源文件为 `src/renderer/src/plugins/plugin-dev-docs.md`。
 
 ### 安装方式
+- **工具仓库**：工具箱 →「获取工具」，从远程索引一键安装/升级（主源 + 镜像自动回退，sha256 校验）
 - **zip 导入**：插件管理页 →「导入插件 (.zip)」（支持根目录或单层子目录打包）
 - **目录放置**：正式插件放 `%APPDATA%/mydash/plugins/<id>/`；开发中的插件放仓库 `plugins-dev/<id>/`（仅 dev 模式扫描，dev 同名插件优先于已安装版本）
+
+### 工具仓库（GitHub / Gitee 分发）
+
+推送 `tools/vX.Y.Z` tag 触发 `.github/workflows/tools-release.yml`：打包 `plugins-dev/` 下的插件 →
+上传 GitHub Release → 回写 `tools-registry/registry.json` → 镜像到 Gitee Release。
+
+```bash
+node scripts/tools/build-tools.mjs --check          # 只校验清单与入口
+npm run tools:pack                                   # 本地打包到 dist-tools/
+git tag -a tools/v0.1.0 -m "工具仓库 0.1.0" && git push origin tools/v0.1.0 && git push github tools/v0.1.0
+```
+
+索引与包都支持多源：应用侧按 Gitee raw → jsDelivr → GitHub raw 回退，下载按 `downloadUrl` →
+`mirrors` 回退。完整流程（独立仓库、签名、安全边界）见 [`docs/plugin-registry.md`](docs/plugin-registry.md)。
 
 ### 插件清单 plugin.json
 ```json

@@ -52,7 +52,17 @@ export interface RemoteRegistryEntry {
   description?: string
   category?: string
   downloadUrl: string
+  /** 备用下载源（境内镜像等）：主地址失败时依次尝试 */
+  mirrors?: string[]
   sha256?: string
+  /** 包体积（字节），用于展示 */
+  size?: number
+}
+
+export interface RemoteRegistryResult {
+  /** 实际生效的索引地址（多源回退后），便于界面提示来源 */
+  source: string
+  entries: RemoteRegistryEntry[]
 }
 
 const ID_PATTERN = /^[a-z0-9][a-z0-9-]{1,63}$/
@@ -277,8 +287,23 @@ async function importZipBuffer(
 }
 
 // ---------------- 远程安装 ----------------
-/** 仓库内置的 registry 索引地址（tools-registry/registry.json），可传参覆盖 */
-const DEFAULT_REGISTRY_URL = 'https://gitee.com/yukai1998/my-dash/raw/main/tools-registry/registry.json'
+/**
+ * 内置索引地址：主源 Gitee raw（国内直连快），回退 jsDelivr CDN 与 GitHub raw。
+ * 可用环境变量 MYDASH_TOOLS_REGISTRY 覆盖（逗号分隔），便于自建索引与本地调试。
+ */
+const DEFAULT_REGISTRY_URLS = [
+  'https://gitee.com/yukai1998/my-dash/raw/main/tools-registry/registry.json',
+  'https://cdn.jsdelivr.net/gh/cocYu/my-dash@main/tools-registry/registry.json',
+  'https://raw.githubusercontent.com/cocYu/my-dash/main/tools-registry/registry.json'
+]
+
+function registrySources(): string[] {
+  const custom = (process.env.MYDASH_TOOLS_REGISTRY || '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean)
+  return custom.length ? custom : DEFAULT_REGISTRY_URLS
+}
 
 /** 带超时与体积上限的下载（Electron 主进程 Node 22 全局 fetch） */
 async function fetchWithLimits(url: string, timeoutMs: number, maxBytes: number): Promise<Buffer> {
@@ -296,10 +321,8 @@ async function fetchWithLimits(url: string, timeoutMs: number, maxBytes: number)
   return Buffer.from(ab)
 }
 
-/** 拉取远程工具索引（默认仓库内置地址，可传自定义 URL） */
-async function fetchRemoteRegistry(url?: string): Promise<RemoteRegistryEntry[]> {
-  const target = (url ?? '').trim() || DEFAULT_REGISTRY_URL
-  const buf = await fetchWithLimits(target, 8000, 1 << 20)
+/** 解析索引 JSON；字段不合法直接报错，避免把半截数据交给界面 */
+function parseRegistry(buf: Buffer): RemoteRegistryEntry[] {
   let data: unknown
   try {
     data = JSON.parse(buf.toString('utf-8'))
@@ -318,20 +341,64 @@ async function fetchRemoteRegistry(url?: string): Promise<RemoteRegistryEntry[]>
     if (typeof raw.description === 'string') entry.description = raw.description
     if (typeof raw.category === 'string') entry.category = raw.category
     if (typeof raw.sha256 === 'string' && /^[0-9a-fA-F]{64}$/.test(raw.sha256)) entry.sha256 = raw.sha256
+    if (Array.isArray(raw.mirrors)) {
+      const mirrors = raw.mirrors.filter((m): m is string => typeof m === 'string' && /^https?:\/\//i.test(m))
+      if (mirrors.length) entry.mirrors = mirrors.slice(0, 5)
+    }
+    if (typeof raw.size === 'number' && raw.size > 0) entry.size = raw.size
     return entry
   })
 }
 
-/** 下载远程工具包（可选 sha256 校验）并覆盖安装 */
-async function installRemote(payload: { url: string; sha256?: string }): Promise<PluginManifest> {
-  const buf = await fetchWithLimits(payload.url, 30000, 20 << 20)
-  if (payload.sha256) {
-    const actual = createHash('sha256').update(buf).digest('hex')
-    if (actual.toLowerCase() !== payload.sha256.toLowerCase()) {
-      throw new Error(`SHA256 校验失败：期望 ${payload.sha256}，实际 ${actual}（包可能被篡改或索引过期）`)
+/**
+ * 拉取远程工具索引：不传 url 时按内置多源依次尝试（Gitee → jsDelivr → GitHub），
+ * 传了 url 则只认该地址（界面里的自定义索引）。
+ */
+async function fetchRemoteRegistry(url?: string): Promise<RemoteRegistryResult> {
+  const custom = (url ?? '').trim()
+  const candidates = custom ? [custom] : registrySources()
+  const errors: string[] = []
+  for (const target of candidates) {
+    try {
+      const buf = await fetchWithLimits(target, 8000, 1 << 20)
+      return { source: target, entries: parseRegistry(buf) }
+    } catch (err) {
+      errors.push(`${target} → ${err instanceof Error ? err.message : String(err)}`)
     }
   }
-  return importZipBuffer(buf, { overwrite: true, source: 'remote' })
+  throw new Error(`工具索引拉取失败（已尝试 ${candidates.length} 个源）：${errors.join('；')}`)
+}
+
+/**
+ * 下载远程工具包并覆盖安装。
+ * 依次尝试 downloadUrl 与 mirrors；任何一次成功都要求 sha256 匹配（若索引提供）。
+ */
+async function installRemote(payload: {
+  url: string
+  mirrors?: string[]
+  sha256?: string
+}): Promise<PluginManifest> {
+  const candidates = [payload.url, ...(payload.mirrors ?? [])]
+    .filter((u): u is string => typeof u === 'string' && /^https?:\/\//i.test(u))
+    .slice(0, 6)
+  if (!candidates.length) throw new Error('缺少有效的下载地址')
+
+  const errors: string[] = []
+  for (const target of candidates) {
+    try {
+      const buf = await fetchWithLimits(target, 30000, 20 << 20)
+      if (payload.sha256) {
+        const actual = createHash('sha256').update(buf).digest('hex')
+        if (actual.toLowerCase() !== payload.sha256.toLowerCase()) {
+          throw new Error(`SHA256 校验失败：期望 ${payload.sha256}，实际 ${actual}（包可能被篡改或索引过期）`)
+        }
+      }
+      return await importZipBuffer(buf, { overwrite: true, source: 'remote' })
+    } catch (err) {
+      errors.push(`${target} → ${err instanceof Error ? err.message : String(err)}`)
+    }
+  }
+  throw new Error(`所有下载源均失败：${errors.join('；')}`)
 }
 
 // ---------------- KV 存储 ----------------
@@ -431,15 +498,18 @@ export function registerPluginIpc(): void {
     return { id: manifest.id, name: manifest.name }
   })
 
-  // 远程工具索引（默认仓库内置地址，可传自定义 URL）
+  // 远程工具索引（不传 url 时按内置多源依次回退）
   ipcMain.handle('plugins:remote-list', (_e, url?: string) => fetchRemoteRegistry(url))
 
-  // 远程下载安装（可选 sha256 校验，覆盖升级）
-  ipcMain.handle('plugins:install-remote', async (_e, payload: { url: string; sha256?: string }) => {
-    if (typeof payload?.url !== 'string' || !payload.url) throw new Error('缺少下载地址')
-    const manifest = await installRemote(payload)
-    return { id: manifest.id, name: manifest.name, version: manifest.version }
-  })
+  // 远程下载安装（主地址 + 镜像回退，可选 sha256 校验，覆盖升级）
+  ipcMain.handle(
+    'plugins:install-remote',
+    async (_e, payload: { url: string; mirrors?: string[]; sha256?: string }) => {
+      if (typeof payload?.url !== 'string' || !payload.url) throw new Error('缺少下载地址')
+      const manifest = await installRemote(payload)
+      return { id: manifest.id, name: manifest.name, version: manifest.version }
+    }
+  )
 
   ipcMain.handle('plugins:uninstall', (_e, id: string) => {
     uninstallPlugin(id)
