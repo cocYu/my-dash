@@ -23,16 +23,20 @@ export interface NotifyTodo {
   subtitle: string | null
   priority: number
   status: 'open' | 'done' | 'closed'
+  start_at: string | null
   due_at: string | null
+  /** 多档提前提醒（分钟）；空数组时退化用 warn_minutes */
+  warn_offsets: number[] | null
   warn_minutes: number | null
 }
 
-/** 一个待触发节点（warn=即将超时 / due=已超时）；key 用于按渠道去重 */
+/** 一个待触发节点（start=已开始 / warn=即将超时 / due=已超时）；key 用于按渠道去重 */
 export interface NotifyEvent {
   todo: NotifyTodo
-  node: 'warn' | 'due'
+  node: 'start' | 'warn' | 'due'
   key: string
-  dueMs: number
+  /** 节点锚点时间：start 取开始时间，warn/due 取截止时间 */
+  anchorMs: number
 }
 
 /** 一条聚合通知：md 用于企微/钉钉，plain 用于飞书/系统弹窗，html 用于邮件 */
@@ -210,21 +214,27 @@ export function buildNotifyMessage(events: NotifyEvent[], now: number): NotifyMe
   const lines: string[] = []
   const plainLines: string[] = []
   const htmlParts: string[] = []
-  const pushGroup = (label: string, node: 'warn' | 'due'): void => {
+  const pushGroup = (label: string, node: NotifyEvent['node']): void => {
     const group = events.filter((e) => e.node === node)
     if (group.length === 0) return
     lines.push(`**${label}**`)
     plainLines.push(label)
     htmlParts.push(`<h3>${label}</h3><ul>`)
-    for (const { todo, dueMs } of group) {
-      const remain = node === 'warn' ? `剩 ${spanText(dueMs - now)}` : `已超时 ${spanText(now - dueMs)}`
+    for (const { todo, anchorMs } of group) {
+      const anchorText =
+        node === 'start'
+          ? `开始 ${formatDueTime(anchorMs)}`
+          : node === 'warn'
+            ? `截止 ${formatDueTime(anchorMs)}，剩 ${spanText(anchorMs - now)}`
+            : `截止 ${formatDueTime(anchorMs)}，已超时 ${spanText(now - anchorMs)}`
       const sub = todo.subtitle ? `（${todo.subtitle}）` : ''
-      lines.push(`- ${todo.title}${sub}（${priorityLabel(todo.priority)}）— 截止 ${formatDueTime(dueMs)}，${remain}`)
-      plainLines.push(`· ${todo.title}${sub}（${priorityLabel(todo.priority)}）— 截止 ${formatDueTime(dueMs)}，${remain}`)
-      htmlParts.push(`<li>${todo.title}${sub}（${priorityLabel(todo.priority)}）— 截止 ${formatDueTime(dueMs)}，${remain}</li>`)
+      lines.push(`- ${todo.title}${sub}（${priorityLabel(todo.priority)}）— ${anchorText}`)
+      plainLines.push(`· ${todo.title}${sub}（${priorityLabel(todo.priority)}）— ${anchorText}`)
+      htmlParts.push(`<li>${todo.title}${sub}（${priorityLabel(todo.priority)}）— ${anchorText}</li>`)
     }
     htmlParts.push('</ul>')
   }
+  pushGroup('🟢 已开始', 'start')
   pushGroup('🟡 即将超时', 'warn')
   pushGroup('🔴 已超时', 'due')
   return {

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"path/filepath"
+	"time"
 
 	// 注册 modernc.org/sqlite 驱动（纯 Go 实现，driver name 为 "sqlite"）
 	_ "modernc.org/sqlite"
@@ -177,5 +178,31 @@ func Migrate(d *sql.DB) error {
 			return fmt.Errorf("set user_version: %w", err)
 		}
 	}
+	if version < 5 {
+		// v5：待办升级——回收站（软删）、重复任务、多档提前提醒
+		stmts := []string{
+			`ALTER TABLE todos ADD COLUMN deleted_at TEXT`,
+			`ALTER TABLE todos ADD COLUMN rec_type TEXT NOT NULL DEFAULT ''`,
+			`ALTER TABLE todos ADD COLUMN rec_interval INTEGER NOT NULL DEFAULT 1`,
+			`ALTER TABLE todos ADD COLUMN warn_offsets TEXT`,
+			`CREATE INDEX idx_todos_deleted ON todos(deleted_at)`,
+		}
+		for _, s := range stmts {
+			if _, err := d.Exec(s); err != nil {
+				return fmt.Errorf("migrate v5: %w", err)
+			}
+		}
+		if _, err := d.Exec("PRAGMA user_version = 5"); err != nil {
+			return fmt.Errorf("set user_version: %w", err)
+		}
+	}
 	return nil
+}
+
+// PurgeExpiredDeleted 彻底删除回收站中超过 days 天的待办（子任务/评论/标签关联随外键级联）。
+// 启动时调用一次；失败不阻断启动，只上报日志。
+func PurgeExpiredDeleted(d *sql.DB, days int) error {
+	cutoff := time.Now().AddDate(0, 0, -days).Format(time.RFC3339)
+	_, err := d.Exec("DELETE FROM todos WHERE deleted_at IS NOT NULL AND deleted_at < ?", cutoff)
+	return err
 }

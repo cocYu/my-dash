@@ -48,6 +48,10 @@ export interface NotifyConfig {
   notifyOnSoon: boolean
   /** 已超时节点是否通知 */
   notifyOnOverdue: boolean
+  /** 开始时间到点是否通知（待办的 start_at 触发） */
+  notifyOnStart: boolean
+  /** 外部渠道推送阈值：仅优先级 ≤ 该值（P0 最高）的待办推送企业微信/飞书/钉钉/邮箱；null = 不限 */
+  externalMinPriority: number | null
   system: SystemNotifyChannel
   wecom: WecomChannel
   feishu: FeishuChannel

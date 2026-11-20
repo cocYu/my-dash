@@ -35,6 +35,11 @@ func main() {
 		log.Fatalf("数据库迁移失败: %v", err)
 	}
 
+	// 回收站 30 天自动清理；失败不阻断启动
+	if err := db.PurgeExpiredDeleted(database, 30); err != nil {
+		log.Printf("回收站自动清理失败: %v", err)
+	}
+
 	router := server.New(
 		api.NewFolderHandler(database),
 		api.NewNoteHandler(database),

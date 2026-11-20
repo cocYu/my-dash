@@ -19,6 +19,8 @@ export function defaultNotifyConfig(): NotifyConfig {
     enabled: true,
     notifyOnSoon: true,
     notifyOnOverdue: true,
+    notifyOnStart: true,
+    externalMinPriority: null,
     system: { enabled: true },
     wecom: { enabled: false, webhook: '' },
     feishu: { enabled: false, webhook: '', secret: '' },

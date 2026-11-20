@@ -63,16 +63,33 @@ const ALL_CHANNELS: NotifyChannelId[] = ['system', 'wecom', 'feishu', 'dingtalk'
 function collectEvents(todos: NotifyTodo[], cfg: NotifyConfig, now: number): NotifyEvent[] {
   const events: NotifyEvent[] = []
   for (const t of todos) {
-    if (t.status !== 'open' || !t.due_at || t.warn_minutes == null || t.warn_minutes < 0) continue
+    if (t.status !== 'open') continue
+    // 开始提醒：start_at 到点触发一次（指纹含开始时间，改期自动重新武装）
+    if (cfg.notifyOnStart && t.start_at) {
+      const startMs = Date.parse(t.start_at)
+      if (!Number.isNaN(startMs) && now >= startMs) {
+        events.push({ todo: t, node: 'start', key: `${t.id}:${startMs}:start`, anchorMs: startMs })
+      }
+    }
+    if (!t.due_at) continue
     const dueMs = Date.parse(t.due_at)
     if (Number.isNaN(dueMs)) continue
-    // 指纹含截止+提前量：改期/改提醒 → 键变化 → 自动重新提醒
-    const fp = `${t.id}:${dueMs}:${t.warn_minutes}`
-    if (cfg.notifyOnSoon && now >= dueMs - t.warn_minutes * 60_000 && now < dueMs) {
-      events.push({ todo: t, node: 'warn', key: `${fp}:warn`, dueMs })
+    // 多档提前提醒：warn_offsets 优先，为空退化用 warn_minutes 单档（负值/null 不提醒）
+    const offsets =
+      t.warn_offsets && t.warn_offsets.length > 0
+        ? t.warn_offsets
+        : t.warn_minutes != null && t.warn_minutes >= 0
+          ? [t.warn_minutes]
+          : []
+    for (const offset of offsets) {
+      if (offset <= 0) continue
+      // 指纹含截止+提前量：改期/改提醒 → 键变化 → 自动重新提醒
+      if (cfg.notifyOnSoon && now >= dueMs - offset * 60_000 && now < dueMs) {
+        events.push({ todo: t, node: 'warn', key: `${t.id}:${dueMs}:${offset}:warn`, anchorMs: dueMs })
+      }
     }
     if (cfg.notifyOnOverdue && now >= dueMs) {
-      events.push({ todo: t, node: 'due', key: `${fp}:due`, dueMs })
+      events.push({ todo: t, node: 'due', key: `${t.id}:${dueMs}:due`, anchorMs: dueMs })
     }
   }
   return events
@@ -94,7 +111,7 @@ export async function runNotifyCheck(ctx: NotifyContext): Promise<{ channels: nu
   const now = Date.now()
   const state = readState()
 
-  // 清理已删除待办的残留标记（键格式：channel:todoId:dueMs:warnMinutes:node）
+  // 清理已删除待办的残留标记（键格式：channel:todoId:anchorMs:offset:node）
   const alive = new Set(todos.map((t) => String(t.id)))
   for (const key of Object.keys(state.sent)) {
     if (!alive.has(key.split(':')[1])) delete state.sent[key]
@@ -109,8 +126,12 @@ export async function runNotifyCheck(ctx: NotifyContext): Promise<{ channels: nu
   const msg = buildNotifyMessage(events, now)
   let okChannels = 0
   let stateChanged = false
+  // 外部渠道推送阈值：仅优先级 ≤ 阈值（P0 最高）的待办推送到企微/飞书/钉钉/邮箱；系统通知不受限
+  const threshold = cfg.externalMinPriority
   for (const id of ids) {
-    const pending = events.filter((e) => state.sent[`${id}:${e.key}`] == null)
+    const pending = events.filter(
+      (e) => state.sent[`${id}:${e.key}`] == null && !(threshold != null && id !== 'system' && e.todo.priority > threshold)
+    )
     if (pending.length === 0) continue
     try {
       await sendToChannel(id, cfg, msg)
