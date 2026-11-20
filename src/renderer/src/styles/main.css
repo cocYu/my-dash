@@ -426,6 +426,9 @@ body {
   --el-button-hover-bg-color: var(--accent-soft);
   --el-button-hover-border-color: var(--accent);
   --el-button-hover-text-color: var(--accent-strong);
+  /* 上面 .el-button--primary 的直接 color 会盖住变量，描边款需要显式改回深色 */
+  color: var(--accent-strong);
+  font-weight: 500;
 }
 
 .el-button--danger.is-plain {
