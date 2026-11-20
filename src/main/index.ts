@@ -15,6 +15,7 @@ import { createTray, destroyTray, updateTrayMenu } from './tray'
 import { initPluginManager, registerPluginIpc, registerPluginProtocol } from './plugins/manager'
 import { registerPluginFilesIpc } from './plugins/files'
 import { registerPinIpc } from './pin'
+import { registerShortcutsIpc, releaseAllShortcuts } from './shortcuts'
 import { buildTestMessage, sendToChannel } from './notify/channels'
 import { readNotifyConfig, writeNotifyConfig } from './notify/config'
 import type { NotifyChannelId } from '../types/notify'
@@ -67,6 +68,7 @@ if (!gotLock) {
     isQuitting = true
   })
   app.on('will-quit', () => {
+    releaseAllShortcuts()
     destroyTray()
     stopBackend()
   })
@@ -141,6 +143,8 @@ async function bootstrap(): Promise<void> {
   // 桌面截屏与截图贴图：插件（screenshot-tool 等）经 window.api.capture / pin 使用
   registerCaptureIpc(() => mainWindow)
   registerPinIpc()
+  // 插件全局快捷键（如截图工具的系统级截图热键）
+  registerShortcutsIpc()
   registerPluginFilesIpc(app.getPath('userData'))
   // AI 工作台（供应商配置加密落盘，网关层兼容 chat/responses/messages）
   // 工具层需要直连本机后端，传入 baseUrl 与访问令牌

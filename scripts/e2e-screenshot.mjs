@@ -1,0 +1,120 @@
+/** Real Electron/IPC/Vue smoke test. Build electron-vite + backend:dev first.
+ * Uses a synthetic screen and temporary appData; never reads the user's desktop or library.
+ */
+import { _electron as electron } from 'playwright-core'
+import { mkdtemp, writeFile, rm, readFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { fileURLToPath } from 'node:url'
+import path from 'node:path'
+import assert from 'node:assert/strict'
+import Jimp from 'jimp'
+const root = fileURLToPath(new URL('../', import.meta.url))
+const temp = await mkdtemp(path.join(tmpdir(), 'capture-e2e-'))
+const entry = path.join(temp, 'boot.cjs'), fixture = path.join(temp, 'fixture.png')
+await writeFile(entry, `const {app}=require('electron');app.setPath('appData',${JSON.stringify(temp)});app.setAppPath(${JSON.stringify(root)});require(${JSON.stringify(path.join(root,'out/main/index.js'))});`)
+await new Jimp(800, 600, 0x35ab85ff).writeAsync(fixture)
+let app
+try {
+  app = await electron.launch({args:[entry], env:{...process.env,MYDASH_CAPTURE_TEST_IMAGE:fixture},timeout:20000})
+  const main = await app.firstWindow(), errors = []
+  main.setDefaultTimeout(7000)
+  main.on('pageerror', e => { errors.push(String(e)); console.error(e) })
+  const workspace = () => main.evaluate(() => { location.hash='/toolbox/screenshot-tool:screenshot' })
+  main.on('console', m => { if(m.type()==='error') console.error(m.text()) })
+  await main.locator('#app[data-v-app]').waitFor()
+  await main.evaluate(dir=>window.api.plugins.kv('screenshot-tool','set','settings',{saveDir:dir}),temp)
+  async function waitHistory(source, previousId) {
+    for (let i=0;i<100;i++) {
+      const list=await main.evaluate(()=>window.api.plugins.kv('screenshot-tool','get','history'))
+      if(list?.[0]?.source===source && list[0].id!==previousId) return list
+      await new Promise(resolve=>setTimeout(resolve,50))
+    }
+    throw new Error(`History never received ${source}`)
+  }
+  await workspace()
+  const desk = main.locator('.st-workspace'); await desk.waitFor({timeout:12000})
+  await main.emulateMedia({reducedMotion:'reduce'})
+  await desk.evaluate(el=>{el.style.maxWidth='375px';document.documentElement.classList.add('dark')})
+  assert(await desk.evaluate(el=>el.scrollWidth<=el.clientWidth+1),'capture UI should fit a narrow tool pane')
+  await desk.evaluate(el=>{el.style.maxWidth='';document.documentElement.classList.remove('dark')})
+  await desk.getByRole('button',{name:'设置',exact:true}).click()
+  await desk.getByText('历史条数',{exact:true}).waitFor()
+  await desk.getByRole('button',{name:'工作台',exact:true}).click()
+  await desk.locator('input[type=file]').setInputFiles(fixture)
+  await desk.getByText('导入 · 800 × 600 px',{exact:true}).waitFor()
+  assert(await desk.getByRole('button',{name:'复制',exact:true}).first().isEnabled())
+  await desk.getByRole('button',{name:'历史 · 1'}).click()
+  await desk.getByRole('button',{name:'打开截图'}).click()
+  await desk.getByRole('button',{name:'画笔',exact:true}).click()
+  await desk.locator('canvas').scrollIntoViewIfNeeded()
+  const box=await desk.locator('canvas').boundingBox()
+  await main.mouse.move(box.x+30,box.y+20);await main.mouse.down();await main.mouse.move(box.x+120,box.y+60,{steps:4});await main.mouse.up()
+  await desk.getByRole('button',{name:'撤销',exact:true}).click();await desk.getByRole('button',{name:'重做',exact:true}).click()
+  await desk.getByRole('button',{name:'历史 · 1'}).click();await desk.getByRole('button',{name:'删除',exact:true}).click()
+  await desk.getByText('暂无截图历史',{exact:false}).waitFor()
+  // No workspace mounted when the overlay sends its final PNG.
+  await main.evaluate(()=>{location.hash='/'})
+  await desk.waitFor({state:'detached'})
+  const openOverlay = async (delay = 0) => {
+    const opening = app.waitForEvent('window')
+    await main.evaluate(delaySeconds => window.api.capture.startRegion({pluginId:'screenshot-tool', delaySeconds}), delay)
+    const overlay=await opening; await overlay.locator('body.ready').waitFor();return overlay
+  }
+  const start = Date.now()
+  let overlay=await openOverlay(3)
+  assert(Date.now()-start >= 3000, 'delay must reach main process')
+  await overlay.mouse.move(100,120); await overlay.mouse.down(); await overlay.mouse.move(420,360,{steps:4}); await overlay.mouse.up()
+  await overlay.locator('#adjust').click(); await overlay.locator('#geometry [name=w]').fill('180'); await overlay.locator('#geometry button').click()
+  await overlay.locator('#eb-output').click()
+  const options=overlay.getByRole('dialog',{name:'截图外观'})
+  await options.getByLabel('截图圆角').check();await options.getByLabel('半径（px）').fill('20')
+  await options.getByRole('button',{name:'应用外观'}).click()
+  await overlay.locator('[data-tool=step]').click();await overlay.locator('#step-size').fill('32');await overlay.getByLabel('附带文字').check()
+  await overlay.locator('#anno').click({position:{x:20,y:22}});await overlay.locator('#anno').click({position:{x:92,y:40}})
+  await overlay.getByLabel('步骤说明').fill('第一步');await overlay.getByLabel('步骤说明').press('Enter')
+  const expectedWidth = Number((await overlay.locator('#selection-size').innerText()).split(' ')[0])
+  await Promise.all([overlay.waitForEvent('close'),overlay.locator('#eb-save').click()])
+  const [item]=await waitHistory('region')
+  assert.equal(item.source,'region');assert.equal(item.width,expectedWidth)
+  const png=await Jimp.read(await readFile(path.join(temp,'mydash','plugins','files','screenshot-tool',item.id+'.png')))
+  assert.equal(png.getPixelColor(0,0)&255,0,'rounded PNG must have a transparent corner')
+  assert.equal(png.getPixelColor(Math.floor(png.bitmap.width/2),Math.floor(png.bitmap.height/2)),0x35ab85ff,'center must preserve frozen pixels')
+  overlay=await openOverlay(); await overlay.locator('#btn-full').click()
+  await overlay.locator('#eb-output').click();await overlay.getByLabel('外壳',{exact:true}).selectOption('frame');await overlay.getByRole('button',{name:'应用外观'}).click()
+  const barOpening=app.waitForEvent('window');await overlay.locator('#eb-longshot').click();const bar=await barOpening
+  await bar.getByText('1 段 · 高 600px').waitFor(); await bar.locator('#btn-grab').click()
+  await bar.locator('#hint').getByText('画面与上一帧相同',{exact:false}).waitFor()
+  assert.equal(await bar.locator('#stat').innerText(),'1 段 · 高 600px')
+  const next = new Jimp(800,600,0x35ab85ff)
+  next.blit(new Jimp(800,150,0x284589ff),0,450);await next.writeAsync(fixture)
+  await bar.locator('#btn-grab').click();await bar.getByText('2 段 · 高 750px').waitFor()
+  await Promise.all([bar.waitForEvent('close'),bar.locator('#btn-edit').click()])
+  await desk.getByText('长图 · 800 × 750 px').waitFor()
+  await desk.getByRole('button',{name:'保存',exact:true}).click()
+  const [framed]=await waitHistory('edit');assert.equal(framed.width,904);assert.equal(framed.height,854)
+  const withShell=await Jimp.read(path.join(temp,'mydash','plugins','files','screenshot-tool',framed.id+'.png'))
+  assert.equal(withShell.getPixelColor(42,42),0xfafafaff,'frame must surround the content')
+  await desk.getByRole('button',{name:'截图外观…'}).click()
+  const appearance=main.getByRole('dialog',{name:'截图外观'})
+  assert.equal(await appearance.getByLabel('外壳',{exact:true}).inputValue(),'frame')
+  await appearance.getByLabel('外壳',{exact:true}).selectOption('none');await appearance.getByRole('button',{name:'应用外观'}).click()
+  await desk.getByRole('button',{name:'步骤',exact:true}).click()
+  await desk.getByLabel('编号直径').fill('54');await desk.getByLabel('附带文字').check()
+  const surface=desk.locator('.st-ed-canvas')
+  await surface.click({position:{x:60,y:90}});await desk.getByText('点击说明位置，确定引线终点').waitFor()
+  await surface.click({position:{x:160,y:112}})
+  const caption=desk.getByRole('textbox',{name:'步骤说明'});await caption.fill('打开设置');await caption.press('Enter')
+  await desk.getByRole('button',{name:'撤销',exact:true}).click();await desk.getByRole('button',{name:'重做',exact:true}).click()
+  await desk.getByRole('button',{name:'保存',exact:true}).click()
+  const [edited,,original]=await waitHistory('edit',framed.id)
+  assert.equal(original.source,'long');assert.equal(edited.width,800);assert.equal(edited.height,750)
+  const annotated=await Jimp.read(path.join(temp,'mydash','plugins','files','screenshot-tool',edited.id+'.png'))
+  assert.equal(annotated.getPixelColor(0,0),0x35ab85ff);assert.equal(annotated.getPixelColor(50,740),0x284589ff)
+  const colors=new Map();annotated.scan(0,0,800,750,function(x,y){const c=this.getPixelColor(x,y);colors.set(c,(colors.get(c)||0)+1)})
+  assert(colors.get(0xe64545ff)>1300,'54px badge and leader should be exported');assert(colors.get(0x202328ff)>20,'caption must be in PNG')
+  await app.evaluate(({BrowserWindow}) => BrowserWindow.getAllWindows()[0].hide())
+  overlay=await openOverlay();await Promise.all([overlay.waitForEvent('close'),overlay.locator('#btn-cancel').click()])
+  assert.equal(await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].isVisible()),false)
+  assert.deepEqual(errors,[])
+  console.log('PASS: settings, import, history open/delete, annotation undo/redo, background archive, region PNG pixels, transparent corners, stitched editor handoff, reversible shell and annotated long PNG')
+} finally { if(app) await app.close(); await rm(temp,{recursive:true,force:true}) }

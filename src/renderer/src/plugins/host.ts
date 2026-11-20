@@ -122,6 +122,7 @@ interface PluginContext {
     on(name: string, cb: (payload?: unknown) => void): () => void
     emit(name: string, payload?: unknown): void
   }
+  onDispose(cleanup: () => void): void
   log(...args: unknown[]): void
 }
 
@@ -145,6 +146,7 @@ const events = {
 let bootId = Date.now().toString(36)
 /** 已注册的路由名（重载时移除） */
 const addedRouteNames: string[] = []
+const pluginCleanups = new Set<() => void>()
 
 function hasPermission(meta: PluginMeta, permission: string): boolean {
   return meta.permissions.includes(permission)
@@ -217,6 +219,7 @@ function createContext(meta: PluginMeta): PluginContext {
       }
     },
     events,
+    onDispose: (fn) => { pluginCleanups.add(fn) },
     log: (...args: unknown[]) => console.log(`[plugin:${meta.id}]`, ...args)
   }
 }
@@ -255,6 +258,10 @@ export async function bootstrapPlugins(): Promise<void> {
 
 /** 重载全部插件：清空注册表与路由后重新加载（管理页"重载"按钮）。 */
 export async function reloadPlugins(): Promise<void> {
+  for (const dispose of pluginCleanups) {
+    try { dispose() } catch (err) { console.warn('[plugins] 清理失败:', err) }
+  }
+  pluginCleanups.clear()
   for (const name of addedRouteNames.splice(0)) {
     if (router.hasRoute(name)) router.removeRoute(name)
   }

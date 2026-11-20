@@ -1,7 +1,15 @@
 // AI 工作台 IPC：供应商 CRUD / 拉取模型 / 对话 / 生图 / 历史 / 提示词增强 / 自定义 Agent。
 import { ipcMain, type IpcMainInvokeEvent, type WebContents } from 'electron'
 import { randomUUID } from 'node:crypto'
-import type { AiChatRequest, AiImageRequest, AiPromptEnhanceRequest, AiProvider, AiUsageQuery } from '../../types/ai'
+import type {
+  AiChatMessage,
+  AiChatRequest,
+  AiImageRequest,
+  AiPromptEnhanceRequest,
+  AiProtocol,
+  AiProvider,
+  AiUsageQuery
+} from '../../types/ai'
 import type { AiAgent, AiSessionPatch, AiStreamRequest, AiStreamResult, AiToolConfirmRequest, AiToolStep } from '../../types/agent'
 import { providersForRenderer, readProviders, saveProvidersFromRenderer, writeProviders } from './config'
 import { chatOnce, fetchModels, testProvider } from './gateway'
@@ -23,6 +31,17 @@ const pendingConfirms = new Map<string, (approved: boolean) => void>()
 
 /** 确认超时：5 分钟无响应按拒绝处理 */
 const CONFIRM_TIMEOUT = 5 * 60 * 1000
+
+/** 插件直连聊天请求：凭据随请求传入（存插件自身配置），不落主程序供应商配置 */
+interface AiChatDirectRequest {
+  protocol?: AiProtocol
+  baseUrl: string
+  apiKey: string
+  model: string
+  messages: AiChatMessage[]
+  temperature?: number
+  maxTokens?: number
+}
 
 /** 把写操作确认请求发给渲染层并等待结果；用户停止生成或超时都算拒绝 */
 function requestToolConfirm(sender: WebContents, req: ToolConfirmInput, signal: AbortSignal): Promise<boolean> {
@@ -99,6 +118,34 @@ export function registerAiIpc(toolCtx: ToolContext): void {
     if (!req.model) throw new Error('请选择模型')
     if (!req.messages?.length) throw new Error('消息不能为空')
     return chatOnce(findProvider(req.providerId), req)
+  })
+
+  // 插件直连聊天（插件自带模型配置，如截图工具的识图/翻译）：凭据随请求传入，
+  // 不写入供应商配置；复用网关三协议归一化，用量照常记录（供应商名标「插件直连」）
+  ipcMain.handle('ai:chat-direct', async (_e, req: AiChatDirectRequest) => {
+    if (!req?.baseUrl?.trim()) throw new Error('接口地址未配置')
+    if (!req.model) throw new Error('请选择模型')
+    if (!req.messages?.length) throw new Error('消息不能为空')
+    const protocol: AiProtocol =
+      req.protocol === 'messages' || req.protocol === 'responses' ? req.protocol : 'chat'
+    const provider: AiProvider = {
+      id: 'plugin-direct',
+      name: '插件直连',
+      preset: 'custom',
+      protocol,
+      baseUrl: req.baseUrl.trim(),
+      apiKey: typeof req.apiKey === 'string' ? req.apiKey : '',
+      enabled: true,
+      models: [],
+      createdAt: ''
+    }
+    return chatOnce(provider, {
+      providerId: provider.id,
+      model: req.model,
+      messages: req.messages,
+      ...(req.temperature !== undefined ? { temperature: req.temperature } : {}),
+      ...(req.maxTokens !== undefined ? { maxTokens: req.maxTokens } : {})
+    })
   })
 
   ipcMain.handle('ai:image:generate', async (_e, req: AiImageRequest) => {

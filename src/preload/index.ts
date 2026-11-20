@@ -1,3 +1,4 @@
+import type { CaptureAppearance } from '../types/capture'
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import type {
   AiAgent,
@@ -12,6 +13,7 @@ import type {
   AiToolInfo
 } from '../types/agent'
 import type {
+  AiChatMessage,
   AiChatRequest,
   AiChatResponse,
   AiHistoryImage,
@@ -166,6 +168,27 @@ export interface PinShowPayload {
   dataUrl: string
   width: number
   height: number
+}
+
+/** 区域截图 / 长截图结果（推送至主窗渲染层记历史，kind 区分来源） */
+export interface RegionResultPayload {
+  edit?: boolean
+  appearance?: CaptureAppearance
+  pluginId?: string
+  dataUrl: string
+  kind: 'region' | 'longshot'
+  ocrText?: string
+}
+
+/** 插件直连聊天请求：凭据随请求传入（插件自带模型配置），不落主程序供应商配置 */
+export interface AiChatDirectRequest {
+  protocol?: 'chat' | 'responses' | 'messages'
+  baseUrl: string
+  apiKey: string
+  model: string
+  messages: AiChatMessage[]
+  temperature?: number
+  maxTokens?: number
 }
 
 const api = {
@@ -329,6 +352,8 @@ const api = {
       test: (id: string): Promise<{ models: number }> => ipcRenderer.invoke('ai:providers:test', id)
     },
     chat: (req: AiChatRequest): Promise<AiChatResponse> => ipcRenderer.invoke('ai:chat', req),
+    /** 插件直连聊天：凭据随请求传入（插件自带模型配置），走统一网关三协议归一化 */
+    chatDirect: (req: AiChatDirectRequest): Promise<AiChatResponse> => ipcRenderer.invoke('ai:chat-direct', req),
     generateImage: (req: AiImageRequest): Promise<AiImageResult[]> =>
       ipcRenderer.invoke('ai:image:generate', req),
     history: {
@@ -408,24 +433,53 @@ const api = {
     /** 枚举屏幕与窗口源（缩略图 dataURL） */
     sources: (): Promise<CaptureSourceInfo[]> => ipcRenderer.invoke('capture:sources'),
     /** 区域截图：主进程隐藏主窗 → 整屏快照 → 创建全屏遮罩窗展示选框 */
-    startRegion: (opts: { pluginId: string; page?: string }): Promise<{ ok: boolean }> =>
-      ipcRenderer.invoke('capture:start-region', { pluginId: opts.pluginId, page: opts.page ?? 'overlay.html' }),
+    startRegion: (opts: { pluginId: string; page?: string; delaySeconds?: number }): Promise<{ ok: boolean }> =>
+      ipcRenderer.invoke('capture:start-region', { pluginId: opts.pluginId, page: opts.page ?? 'overlay.html', delaySeconds: opts.delaySeconds }),
     /** 单帧快照（整屏或窗口，thumbnail 通道；屏幕源 MediaStream 不出帧的环境下更可靠） */
     snapshot: (sourceId: string): Promise<{ dataUrl: string; width: number; height: number }> =>
       ipcRenderer.invoke('capture:snapshot', sourceId),
+    copyPng: (bytes: Uint8Array): Promise<void> => ipcRenderer.invoke('capture:copy-png', bytes),
     /** 遮罩页取冻屏画面（仅遮罩窗自身可取） */
     getOverlayImage: (): Promise<string | null> => ipcRenderer.invoke('capture:get-overlay-image'),
-    /** 遮罩页确认选框：携带裁剪结果关闭遮罩并还原主窗 */
-    finishRegion: (payload: { dataUrl: string }): Promise<void> =>
+    /** 遮罩页完成最终动作（就地标注/OCR/贴图等）：携带结果关闭遮罩并按截图前可见性还原主窗 */
+    finishRegion: (payload: { dataUrl: string; kind?: 'region' | 'longshot'; ocrText?: string }): Promise<void> =>
       ipcRenderer.invoke('capture:finish-region', payload),
     /** 遮罩页取消 */
     cancelRegion: (): Promise<void> => ipcRenderer.invoke('capture:cancel-region'),
     /** 区域截图结果推送到主窗渲染层（仅主窗会收到） */
-    onRegionResult: (cb: (payload: { dataUrl: string }) => void): (() => void) => {
-      const listener = (_e: unknown, payload: { dataUrl: string }): void => cb(payload)
+    onRegionResult: (cb: (payload: RegionResultPayload) => void): (() => void) => {
+      const listener = (_e: unknown, payload: RegionResultPayload): void => cb(payload)
       ipcRenderer.on('capture:region-result', listener)
       return () => ipcRenderer.removeListener('capture:region-result', listener)
     },
+    /** 长截图：遮罩页交棒选区与首帧，主进程转场到浮动控制条窗 */
+    startLongshot: (payload: {
+      pluginId: string
+      barPage?: string
+      rect: { x: number; y: number; w: number; h: number }
+      appearance?: CaptureAppearance
+      pixelRect?: { x: number; y: number; w: number; h: number } | null
+      firstFrame: string
+    }): Promise<{ ok: boolean }> => ipcRenderer.invoke('capture:start-longshot', payload),
+    /** 控制条页取初始选区与首帧（仅控制条窗自身可取） */
+    getLongshotInit: (): Promise<{
+      rect: { x: number; y: number; w: number; h: number }
+      appearance?: CaptureAppearance
+      pixelRect?: { x: number; y: number; w: number; h: number } | null
+      firstFrame: string
+      dpr: number
+    } | null> => ipcRenderer.invoke('capture:get-longshot-init'),
+    /** 控制条页逐帧整屏快照（自行按选区裁剪；控制条窗内容保护不进画面） */
+    longshotFrame: (): Promise<{ dataUrl: string; dpr: number } | null> =>
+      ipcRenderer.invoke('capture:longshot-frame'),
+    /** 自动翻页：向前置目标应用发翻页键（macOS osascript，需辅助功能权限） */
+    sendKey: (key: 'down' | 'pagedown' | 'space'): Promise<{ ok: boolean; message?: string }> =>
+      ipcRenderer.invoke('capture:send-key', { key }),
+    /** 长截图拼接完成：关闭控制条并推送结果 */
+    editLongshot: (dataUrl: string): Promise<void> => ipcRenderer.invoke('capture:finish-longshot', { dataUrl, edit: true }),
+    finishLongshot: (dataUrl: string): Promise<void> => ipcRenderer.invoke('capture:finish-longshot', { dataUrl }),
+    /** 取消长截图 */
+    cancelLongshot: (): Promise<void> => ipcRenderer.invoke('capture:cancel-longshot'),
     /** 图片字节落盘：dir 给定直写，否则弹另存对话框 */
     saveFile: (payload: { bytes: Uint8Array; ext?: string; dir?: string; defaultName?: string }): Promise<SaveFileResult> =>
       ipcRenderer.invoke('capture:save-file', payload),
@@ -449,6 +503,18 @@ const api = {
     close: (id: string): Promise<void> => ipcRenderer.invoke('pin:close', id),
     closeAll: (): Promise<void> => ipcRenderer.invoke('pin:close-all'),
     list: (): Promise<{ id: string; bounds: Electron.Rectangle }[]> => ipcRenderer.invoke('pin:list')
+  },
+  /** 插件全局快捷键（系统级，主窗不聚焦也可触发；触发动作由主进程直接执行） */
+  shortcuts: {
+    /** 注册快捷键（每插件至多一条，重复注册覆盖；同键被其他插件注册时后注册者抢占） */
+    register: (
+      payload: { pluginId: string; action: 'capture-region'; accelerator: string }
+    ): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke('shortcuts:register', payload),
+    /** 注销插件注册的全部快捷键 */
+    unregister: (pluginId: string): Promise<{ ok: boolean }> => ipcRenderer.invoke('shortcuts:unregister', pluginId),
+    /** 当前已注册清单 */
+    list: (): Promise<{ pluginId: string; action: string; accelerator: string }[]> =>
+      ipcRenderer.invoke('shortcuts:list')
   }
 }
 

@@ -229,29 +229,58 @@ events: {
 
 等价 `console.log`，输出自动带 `[plugin:<id>]` 前缀，调试时在 DevTools Console 过滤该前缀即可。
 
-## 桌面能力（window.api.capture / pin / plugins.files）
+## 桌面能力（window.api.capture / pin / shortcuts / plugins.files）
 
-除 `ctx.*` 外，插件运行在主世界，可直接使用主应用暴露的三组桌面能力（截图类插件依赖它们，旧版应用上 `window.api.capture` 等不存在，请做能力检测并提示升级）：
+除 `ctx.*` 外，插件运行在主世界，可直接使用主应用暴露的桌面能力（截图类插件依赖它们，旧版应用上 `window.api.capture` 等不存在，请做能力检测并提示升级）：
 
-### window.api.capture — 桌面截屏
+### window.api.capture — 桌面截屏（遮罩就地编辑 + 选区长截图）
 
 ```ts
 capture: {
   sources(): Promise<CaptureSourceInfo[]>           // 屏幕+窗口源（缩略图 dataURL，供自绘选择器）
-  startRegion(opts: { pluginId: string; page?: string }): Promise<{ ok: boolean }>
+  startRegion(opts: { pluginId: string; page?: string; delaySeconds?: 0 | 3 | 5 | 10 }): Promise<{ ok: boolean }>
   getOverlayImage(): Promise<string | null>         // 仅遮罩窗自身可取（冻屏全帧）
-  finishRegion(payload: { dataUrl: string }): void  // 遮罩页确认选框：关遮罩、还原主窗、结果推回主窗
+  // 遮罩页完成最终动作后调用：关遮罩、按截图前主窗可见性还原主窗、结果推回主窗
+  finishRegion(payload: { dataUrl: string; kind?: 'region' | 'longshot'; ocrText?: string }): Promise<void>
   cancelRegion(): Promise<void>                     // 遮罩页取消
-  onRegionResult(cb: (p: { dataUrl: string }) => void): () => void  // 主窗接收区域截图结果
+  onRegionResult(cb: (p: { pluginId?: string; dataUrl: string; kind: 'region' | 'longshot'; ocrText?: string; edit?: boolean; appearance?: CaptureAppearance }) => void): () => void
+  copyPng(bytes: Uint8Array): Promise<void> // 仅当前遮罩窗/长截图控制条可用
   snapshot(sourceId: string): Promise<{ dataUrl: string; width: number; height: number }>  // 单帧快照
+  // 长截图：遮罩页交棒选区与首帧 → 主进程转场到浮动控制条窗（加载 plugin://<id>/<barPage>）
+  startLongshot(p: { pluginId: string; barPage?: string; rect: { x,y,w,h }; pixelRect?: { x,y,w,h }; appearance?: CaptureAppearance; firstFrame: string }): Promise<{ ok }>
+  getLongshotInit(): Promise<{ rect; pixelRect; appearance?; firstFrame; dpr } | null>   // 仅控制条窗自身可取
+  longshotFrame(): Promise<{ dataUrl: string; dpr: number } | null>  // 逐帧整屏快照（自行按选区裁剪）
+  sendKey(key: 'down' | 'pagedown' | 'space'): Promise<{ ok; message? }>  // 自动翻页键（macOS，需辅助功能权限）
+  editLongshot(dataUrl: string): Promise<void>      // 传未加外壳/圆角的整图，显示主窗并发送 edit:true
+  finishLongshot(dataUrl: string): Promise<void>    // 拼接完成：关控制条、结果推回主窗
+  cancelLongshot(): Promise<void>
   saveFile(p: { bytes; ext?; dir?; defaultName? }): Promise<{ saved: boolean; filePath? }> // dir 直写 / 弹另存
   chooseDir(): Promise<{ dir: string } | null>
 }
 ```
 
-- 源 id 形如 `window:xxx:yyy` / `screen:x:y`；**窗口源**建议走 `getUserMedia({video:{mandatory:{chromeMediaSource:'desktop', chromeMediaSourceId}}})` 拿原生分辨率持续流（长图必需）；**屏幕源**在部分环境下 MediaStream 不出帧，用 `snapshot()`（desktopCapturer 高分辨率 thumbnail 通道）更可靠
-- `startRegion` 流程：主进程隐藏主窗 → 整屏快照 → 主屏建全屏遮罩窗（加载 `plugin://<id>/<page>` 遮罩页，经 `getOverlayImage` 取冻屏画面）→ 拖框 → `finishRegion` 裁剪结果推回主窗 `onRegionResult`。遮罩窗/贴图窗均 `setContentProtection`，不会出现在后续截屏里
+- 源 id 形如 `window:xxx:yyy` / `screen:x:y`；**屏幕源**在部分环境下 MediaStream 不出帧，用 `snapshot()` / `longshotFrame()`（desktopCapturer 高分辨率 thumbnail 通道）更可靠
+- `startRegion` 流程：主进程隐藏主窗 → 可选延时 → 在触发时鼠标所在显示器取快照并创建全屏遮罩窗（加载 `plugin://<id>/<page>` 遮罩页，经 `getOverlayImage` 取冻屏画面）→ 拖框后遮罩**不关闭**，就地完成标注/OCR/贴图等动作 → 最终动作后 `finishRegion` 推回主窗 `onRegionResult`。遮罩窗/贴图窗/长截图控制条均 `setContentProtection`，不会出现在后续截屏里
+- `CaptureAppearance` 包含 `rounded: boolean`、`radius: number`（图像像素）及 `shell: string`。`editLongshot` 是可选新能力，旧宿主应先检测。
+- 长截图：`startLongshot` 后遮罩退场、底部浮出控制条（`focusable:false` 不抢焦点）；控制条页用 `longshotFrame()` 逐帧抓取选区，渲染层自行拼接；自动滚动用 `sendKey` 向前置目标应用发翻页键（osascript，macOS 需在 系统设置 → 隐私与安全性 → 辅助功能 授权，失败时给用户引导并回退手动模式）
 - 多显示器 v1 仅支持主屏遮罩
+
+### window.api.shortcuts — 插件全局快捷键
+
+```ts
+shortcuts: {
+  // 注册系统级快捷键（主窗不聚焦也可触发）；action 目前支持 'capture-region'
+  register(p: { pluginId: string; action: 'capture-region'; accelerator: string }): Promise<{ ok: boolean; error?: string }>
+  unregister(pluginId: string): Promise<{ ok: boolean }>
+  list(): Promise<{ pluginId: string; action: string; accelerator: string }[]>
+}
+```
+
+- 触发后由**主进程**直接执行动作（如 `capture-region` 直接拉起该插件注册的遮罩页），无需插件进程参与
+- 每插件至多一条（重复注册覆盖）；同键被其他插件注册时后注册者抢占；应用保留键（`CmdOrCtrl+Shift+S/H/Q`）拒绝注册；被其他应用占用时 `ok:false` 并带 `error`
+- 插件禁用/卸载时主进程自动注销；插件 `activate` 时按持久化配置自行重新注册即可
+
+### window.api.pin — 截图贴图（置顶悬浮窗）
 
 ### window.api.pin — 截图贴图（置顶悬浮窗）
 
@@ -283,9 +312,11 @@ plugins.files: {
 
 落盘 `userData/plugins/files/<插件id>/`：随插件覆盖安装不丢失、不受笔记附件 GC 影响、在数据同步备份范围内。适合截图历史等小体量二进制（KV 只放元数据，不要放大文件）。
 
-### AI 多模态（图片输入）
+### AI 多模态（图片输入）与插件直连
 
 `window.api.ai.chat` 的消息 `content` 支持 `string | [{type:'text',text}, {type:'image_url',image_url:{url: dataURI}}]`（网关按供应商协议自动转换：OpenAI chat 直通 / Responses input_image / Anthropic base64 image 块；system 消息仅文本）。流式接口仍只支持文本。
+
+插件想自带模型配置（不经主程序 AI 工作台）时，用 `window.api.ai.chatDirect`：凭据随请求传入（`{ protocol?: 'chat'|'responses'|'messages', baseUrl, apiKey, model, messages }`），主进程用统一网关发请求，不写入供应商配置。注意 Key 由插件自行持久化（如存 `ctx.storage`，落本机 JSON 明文）。
 
 ## 权限模型
 
@@ -384,3 +415,5 @@ A：本地导入不做覆盖，先卸载再导入；或改用「从 URL 安装�
 
 **Q：插件数据在哪、会被同步吗？**
 A：目录在 `userData/plugins/`，KV 在 `userData/plugins/data/<id>.json`；两者都在数据同步的备份包内，换设备还原后自动回来（还原后主应用会自动重扫插件）。
+
+激活插件时创建的长期订阅可通过 `ctx.onDispose(cleanup)` 注册清理，重载插件时宿主先取消旧订阅。组件自身的订阅应在卸载时取消。

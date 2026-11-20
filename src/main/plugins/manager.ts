@@ -9,6 +9,7 @@ import fs from 'node:fs'
 import fsp from 'node:fs/promises'
 import path from 'node:path'
 import { listSources, registerPluginSourceIpc, type PluginSource } from './sources'
+import { releasePluginShortcuts } from '../shortcuts'
 
 export interface PluginManifest {
   id: string
@@ -194,11 +195,7 @@ function rescan(): void {
   const byId = new Map<string, PluginRecord>()
   for (const rec of found) {
     if (rec.error) continue // 错误记录不去重，全部保留展示
-    const prev = byId.get(rec.manifest.id)
-    byId.set(rec.manifest.id, rec)
-    if (prev) {
-      rec.enabled = prev.enabled || rec.enabled
-    }
+    if (!byId.has(rec.manifest.id)) byId.set(rec.manifest.id, rec)
   }
   const errors = found.filter((r) => r.error)
   records = [...byId.values(), ...errors]
@@ -571,6 +568,8 @@ export function registerPluginIpc(): void {
   ipcMain.handle('plugins:set-enabled', (_e, id: string, enabled: boolean) => {
     const rec = getRecord(id)
     if (!rec) throw new Error(`插件不存在: ${id}`)
+    // 禁用时顺带清理插件注册的全局快捷键（启用后由插件 activate 重新注册）
+    if (!enabled) releasePluginShortcuts(id)
     installed[id] = installed[id] ?? { enabled, installedAt: new Date().toISOString() }
     installed[id].enabled = enabled
     saveState()
@@ -602,6 +601,7 @@ export function registerPluginIpc(): void {
   )
 
   ipcMain.handle('plugins:uninstall', (_e, id: string) => {
+    releasePluginShortcuts(id)
     uninstallPlugin(id)
     return records.map(toSerializable)
   })
