@@ -1,26 +1,27 @@
 <template>
   <div class="note-tree">
     <div class="tree-toolbar">
-      <el-tooltip content="新建根文件夹" placement="top">
-        <el-button size="small" text @click="createFolder(null)"><el-icon><FolderAddIcon /></el-icon></el-button>
-      </el-tooltip>
-      <el-tooltip content="新建根笔记" placement="top">
-        <el-button size="small" text @click="createNote(null)"><el-icon><DocumentAddIcon /></el-icon></el-button>
+      <el-button size="small" type="primary" class="new-note" @click="createNote(null)">
+        <el-icon><DocumentAddIcon /></el-icon>
+        <span>新建笔记</span>
+      </el-button>
+      <el-tooltip content="新建文件夹" placement="top">
+        <el-button size="small" class="tool-btn" @click="createFolder(null)">
+          <el-icon><FolderAddIcon /></el-icon>
+        </el-button>
       </el-tooltip>
       <el-dropdown trigger="click" @command="(cmd: string) => void onImportCommand(cmd)">
-        <el-button size="small" text title="导入 Markdown（文件 / 文件夹）">
-          <el-icon><UploadIcon /></el-icon>
+        <el-button size="small" class="tool-btn" title="更多">
+          <el-icon><MoreFilled /></el-icon>
         </el-button>
         <template #dropdown>
           <el-dropdown-menu>
-            <el-dropdown-item command="files">导入 Markdown 文件…</el-dropdown-item>
+            <el-dropdown-item command="sample">创建 Markdown 语法示例</el-dropdown-item>
+            <el-dropdown-item command="files" divided>导入 Markdown 文件…</el-dropdown-item>
             <el-dropdown-item command="folder">导入 Markdown 文件夹…</el-dropdown-item>
           </el-dropdown-menu>
         </template>
       </el-dropdown>
-      <el-tooltip content="创建 Markdown 语法全览示例笔记" placement="top">
-        <el-button size="small" text @click="createSample"><el-icon><TicketsIcon /></el-icon></el-button>
-      </el-tooltip>
     </div>
     <el-input v-model="filterText" size="small" placeholder="搜索…" clearable class="tree-search">
       <template #prefix><el-icon><SearchIcon /></el-icon></template>
@@ -92,9 +93,8 @@ import {
   Folder as FolderIcon,
   FolderAdd as FolderAddIcon,
   FolderOpened as FolderOpenedIcon,
-  Search as SearchIcon,
-  Tickets as TicketsIcon,
-  Upload as UploadIcon
+  MoreFilled,
+  Search as SearchIcon
 } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { MdImportNode } from '../../../../preload/index'
@@ -299,6 +299,10 @@ async function createFolder(parentId: number | null): Promise<void> {
 
 // ---- 导入 / 示例 ----
 function onImportCommand(cmd: string): void {
+  if (cmd === 'sample') {
+    createSample()
+    return
+  }
   void (cmd === 'folder' ? importFolder(null) : importFiles(null))
 }
 
@@ -425,12 +429,23 @@ onBeforeUnmount(() => window.removeEventListener('click', closeCtxMenu))
 
 .tree-toolbar {
   display: flex;
-  gap: 2px;
-  margin-bottom: 4px;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.new-note {
+  flex: 1;
+  justify-content: center;
+}
+
+.tool-btn {
+  width: 32px;
+  padding: 0;
 }
 
 .tree-search {
-  margin-bottom: 8px;
+  margin-bottom: 10px;
 }
 
 .tree {

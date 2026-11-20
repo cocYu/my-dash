@@ -157,17 +157,16 @@
           </template>
         </template>
         <div v-if="visibleItems.length === 0" class="list-empty">
-          <el-empty :description="emptyText" :image-size="80">
-            <el-button v-if="filterStatus === 'open' && visibleItems.length === 0" type="primary" size="small" @click="createTodoRoot">新建待办</el-button>
-          </el-empty>
+          <EmptyState compact :title="emptyText" hint="可以换个筛选条件，或直接新建一条">
+            <el-button v-if="filterStatus === 'open'" type="primary" size="small" @click="createTodoRoot">新建待办</el-button>
+          </EmptyState>
         </div>
       </div>
     </div>
 
-    <!-- 右：详情 -->
-    <div class="glass detail-panel">
+    <!-- 右：详情（未选中时整块收起，把宽度让给列表） -->
+    <div v-if="selected" class="glass detail-panel">
       <TodoDetail
-        v-if="selected"
         :key="selected.id"
         :todo="selected"
         :subtasks="childrenOf(selected.id)"
@@ -176,9 +175,6 @@
         @changed="refresh"
         @deleted="onDeleted"
       />
-      <div v-else class="detail-empty">
-        <el-empty description="选择一条待办查看详情" :image-size="90" />
-      </div>
     </div>
 
     <!-- 行右键菜单 -->
@@ -202,16 +198,18 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onActivated, onMounted, ref } from 'vue'
+import { computed, onActivated, onBeforeUnmount, onMounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   Delete as DeleteIcon,
   Edit as EditIcon,
+  Finished,
   Folder as FolderIcon,
   Plus as PlusIcon,
   Search as SearchIcon
 } from '@element-plus/icons-vue'
 import TodoDetail from '../components/todos/TodoDetail.vue'
+import EmptyState from '../components/EmptyState.vue'
 import {
   createTodo,
   createTodoCategory,
@@ -468,7 +466,15 @@ async function removeRow(todo: Todo): Promise<void> {
   ElMessage.success('待办已删除')
 }
 
-onMounted(refresh)
+onMounted(() => {
+  void refresh()
+  window.addEventListener('mydash:new-todo', onPaletteNewTodo)
+})
+
+// 命令面板「新建待办」
+function onPaletteNewTodo(): void {
+  void createTodoRoot()
+}
 
 // App.vue 用 keep-alive 缓存页面，切回待办页不会重新挂载。
 // 首次挂载已由 onMounted 拉取，之后每次激活都刷新，避免外部写入（脚本导入 / AI 助手 / 其他窗口）后列表过期。
@@ -480,6 +486,8 @@ onActivated(() => {
   }
   void refresh()
 })
+
+onBeforeUnmount(() => window.removeEventListener('mydash:new-todo', onPaletteNewTodo))
 </script>
 
 <style scoped>
@@ -487,14 +495,14 @@ onActivated(() => {
   height: 100%;
   overflow: hidden;
   flex-direction: row;
-  gap: 14px;
+  gap: 16px;
 }
 
 /* 左侧分类/标签 */
 .side-panel {
-  width: 216px;
+  width: 220px;
   flex-shrink: 0;
-  padding: 12px;
+  padding: 10px;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
@@ -629,8 +637,8 @@ onActivated(() => {
 
 /* 中间列表 */
 .list-panel {
-  width: 420px;
-  flex-shrink: 0;
+  flex: 1.15 1 0;
+  min-width: 0;
   padding: 12px;
   display: flex;
   flex-direction: column;
@@ -648,6 +656,7 @@ onActivated(() => {
 
 .filter-row.second {
   flex-wrap: wrap;
+  justify-content: flex-start;
 }
 
 .search-input {
@@ -656,8 +665,8 @@ onActivated(() => {
 }
 
 .mini-select {
-  width: 118px;
-  flex-shrink: 0;
+  flex: 1 1 0;
+  min-width: 0;
 }
 
 .todo-list {
@@ -670,13 +679,17 @@ onActivated(() => {
 }
 
 .todo-row {
+  position: relative;
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 8px 10px;
-  border-radius: 10px;
+  gap: 9px;
+  padding: 9px 10px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
   border: 1px solid transparent;
+  transition:
+    background var(--dur-fast) var(--ease),
+    border-color var(--dur-fast) var(--ease);
 }
 
 .todo-row:hover {
@@ -688,9 +701,24 @@ onActivated(() => {
   border-color: var(--accent-border);
 }
 
+.todo-row.selected::before {
+  content: '';
+  position: absolute;
+  left: -1px;
+  top: 8px;
+  bottom: 8px;
+  width: 3px;
+  border-radius: 0 2px 2px 0;
+  background: var(--accent);
+}
+
 .todo-row.subtask {
   margin-left: 26px;
   padding: 5px 10px;
+}
+
+.todo-row.subtask.selected::before {
+  display: none;
 }
 
 .row-check {
@@ -813,7 +841,7 @@ onActivated(() => {
 
 /* 右侧详情 */
 .detail-panel {
-  flex: 1;
+  flex: 1 1 0;
   min-width: 0;
   padding: 16px;
   overflow-y: auto;

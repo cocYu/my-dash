@@ -21,7 +21,7 @@
             <el-tag v-if="tool.fromPlugin" size="small" type="warning" effect="plain" class="src-tag">插件</el-tag>
           </button>
         </template>
-        <el-empty v-if="!grouped.length" description="没有匹配的工具" :image-size="60" />
+        <EmptyState v-if="!grouped.length" compact title="没有匹配的工具" hint="试试更短的关键词" :icon="Search" />
       </div>
       <div class="sidebar-foot">
         <el-button size="small" class="foot-btn" @click="marketOpen = true">
@@ -49,7 +49,9 @@
           </keep-alive>
         </div>
       </template>
-      <el-empty v-else description="从左侧选择一个工具开始" class="ws-empty" />
+      <div v-else class="ws-empty">
+        <EmptyState title="选择一个工具开始" hint="左侧按分类列出所有内置与插件工具" :icon="SetUp" />
+      </div>
     </div>
 
     <ToolMarketDialog v-model="marketOpen" />
@@ -63,6 +65,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { Search, SetUp, Shop } from '@element-plus/icons-vue'
 import { toolboxRegistry, type ToolMeta } from '../toolbox/registry'
 import ToolMarketDialog from '../toolbox/ToolMarketDialog.vue'
+import EmptyState from '../components/EmptyState.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -114,13 +117,13 @@ watch(
   height: 100%;
   overflow: hidden;
   flex-direction: row;
-  gap: 14px;
+  gap: 16px;
 }
 
 .sidebar {
-  width: 240px;
+  width: 248px;
   flex-shrink: 0;
-  padding: 12px;
+  padding: 10px;
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -134,7 +137,9 @@ watch(
 }
 
 .group-title {
-  font-size: 11px;
+  font-size: 10.5px;
+  text-transform: uppercase;
+  font-weight: 600;
   color: var(--ink-3);
   letter-spacing: 0.08em;
   padding: 10px 8px 4px;
@@ -143,9 +148,9 @@ watch(
 .tool-item {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 9px;
   width: 100%;
-  border: none;
+  border: 1px solid transparent;
   background: none;
   color: var(--ink-2);
   text-align: left;
@@ -153,7 +158,9 @@ watch(
   border-radius: var(--radius-sm);
   cursor: pointer;
   font-size: 13px;
-  transition: background 0.15s ease;
+  transition:
+    background var(--dur-fast) var(--ease),
+    border-color var(--dur-fast) var(--ease);
 }
 
 .tool-item:hover {
@@ -162,6 +169,7 @@ watch(
 
 .tool-item.active {
   background: var(--accent-soft);
+  border-color: var(--accent-border);
   color: var(--accent-strong);
   font-weight: 600;
 }

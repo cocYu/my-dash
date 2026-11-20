@@ -25,3 +25,6 @@ dist-size/
 dist-ci*/
 dist-linux-check*/
 dist-publish*/
+
+# UI 走查截图
+.shots/

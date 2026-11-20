@@ -679,7 +679,7 @@ function providerName(id: string): string {
 .session-head { border-top: 1px solid var(--divider); margin-top: 8px; padding-top: 8px; }
 .session-search { padding: 0 2px 6px; flex-shrink: 0; }
 
-.agent-list { flex: 1; overflow-y: auto; min-height: 80px; }
+.agent-list { flex: 0 1 auto; max-height: 46%; overflow-y: auto; min-height: 80px; }
 .agent-item {
   display: flex;
   align-items: center;
@@ -757,12 +757,13 @@ function providerName(id: string): string {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  flex-wrap: wrap;
+  gap: 8px 12px;
   padding: 10px 14px;
   border-bottom: 1px solid var(--divider);
   flex-shrink: 0;
 }
-.chat-title { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.chat-title { display: flex; align-items: center; gap: 10px; min-width: 0; flex: 1 1 150px; }
 .chat-emoji { font-size: 22px; line-height: 1; }
 .chat-name-wrap { min-width: 0; }
 .chat-name { font-size: 13px; font-weight: 600; }
@@ -770,9 +771,17 @@ function providerName(id: string): string {
   margin-top: 1px; font-size: 11px; color: var(--ink-3);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 260px;
 }
-.chat-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
-.sel-model { width: 200px; }
-.sel-effort { width: 118px; }
+.chat-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  flex: 0 1 auto;
+  min-width: 0;
+}
+.sel-model { width: 168px; max-width: 44vw; }
+.sel-effort { width: 106px; }
 
 .chat-body { flex: 1; overflow-y: auto; padding: 16px 18px; min-height: 0; }
 

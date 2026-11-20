@@ -1042,6 +1042,7 @@ function reportExport(r: { saved: boolean; filePath?: string }): void {
 .editor-toolbar {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
   padding: 8px 12px;
   border-radius: var(--radius);
@@ -1049,9 +1050,9 @@ function reportExport(r: { saved: boolean; filePath?: string }): void {
 }
 
 .title-input {
-  flex: 1;
-  min-width: 150px;
-  max-width: 320px;
+  flex: 1 1 200px;
+  min-width: 170px;
+  max-width: none;
 }
 
 .view-switch {
@@ -1063,14 +1064,15 @@ function reportExport(r: { saved: boolean; filePath?: string }): void {
 }
 
 .theme-select {
-  width: 150px;
+  width: 132px;
   flex-shrink: 0;
 }
 
 .save-state {
-  font-size: 12px;
+  margin-left: auto;
+  font-size: 11.5px;
   color: var(--ink-3);
-  min-width: 90px;
+  min-width: 72px;
   text-align: right;
 }
 

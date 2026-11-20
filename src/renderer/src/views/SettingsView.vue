@@ -87,7 +87,13 @@
               :class="{ active: t.id === currentTheme }"
               @click="selectTheme(t.id)"
             >
-              <span class="preview" :style="{ background: previewStyle(t) }" />
+              <span class="preview" :style="{ background: t.preview[0] }">
+                <span class="pv-card" :style="{ background: t.preview[1] }">
+                  <span class="pv-line" :style="{ background: t.preview[2] }" />
+                  <span class="pv-line short" />
+                </span>
+                <span class="pv-dot" :style="{ background: t.preview[2] }" />
+              </span>
               <span class="meta">
                 <span class="name">{{ t.name }}</span>
                 <el-tag size="small" effect="plain">{{ t.mode === 'dark' ? '深色' : '浅色' }}</el-tag>
@@ -163,11 +169,7 @@ function selectTheme(id: string): void {
   currentTheme.value = id
 }
 
-/** 主题卡片预览底：背景色 + 玻璃斑 + 主色光斑 */
-function previewStyle(t: ThemeMeta): string {
-  return `radial-gradient(circle at 78% 30%, ${t.preview[2]}66, transparent 62%),` +
-    `radial-gradient(circle at 22% 75%, ${t.preview[1]}, ${t.preview[0]})`
-}
+// 主题卡片预览用三色拼一个迷你界面（背景 / 面板 / 主色），比纯渐变更容易区分
 
 async function setLoginItem(open: boolean | string | number): Promise<void> {
   loginSwitching.value = true
@@ -233,9 +235,9 @@ onMounted(async () => {
 
 /* 左侧分类菜单：固定，条目过多时菜单区独立滚动 */
 .nav-panel {
-  width: 168px;
+  width: 176px;
   flex-shrink: 0;
-  padding: 10px;
+  padding: 8px;
   overflow-y: auto;
 }
 
@@ -245,7 +247,7 @@ onMounted(async () => {
 }
 
 .settings-menu :deep(.el-menu-item) {
-  height: 40px;
+  height: 36px;
   border-radius: var(--radius-sm);
   color: var(--ink-2);
   transition: background 0.2s ease, color 0.2s ease;
@@ -267,13 +269,14 @@ onMounted(async () => {
   flex: 1;
   min-width: 0;
   overflow-y: auto;
-  padding: 18px 20px;
+  padding: 20px 22px;
 }
 
 .section-title {
-  font-size: 13px;
+  font-size: 11px;
   font-weight: 600;
-  letter-spacing: 0.06em;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
   color: var(--ink-3);
   margin-bottom: 12px;
 }
@@ -313,7 +316,7 @@ onMounted(async () => {
 /* 外观：主题卡片 */
 .theme-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
   gap: 12px;
 }
 
@@ -342,9 +345,47 @@ onMounted(async () => {
 }
 
 .preview {
-  height: 64px;
+  position: relative;
+  display: block;
+  height: 76px;
   border-radius: 8px;
   border: 1px solid var(--divider);
+  overflow: hidden;
+}
+
+.pv-card {
+  position: absolute;
+  left: 12px;
+  right: 34px;
+  top: 14px;
+  bottom: 12px;
+  border-radius: 6px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.18);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px;
+}
+
+.pv-line {
+  height: 4px;
+  width: 54%;
+  border-radius: 2px;
+  opacity: 0.9;
+}
+
+.pv-line.short {
+  width: 32%;
+  background: rgba(127, 127, 127, 0.4);
+}
+
+.pv-dot {
+  position: absolute;
+  right: 14px;
+  top: 18px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
 }
 
 .meta {
@@ -360,7 +401,15 @@ onMounted(async () => {
 }
 
 .check {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  padding: 3px;
+  font-size: 13px;
+  border-radius: 50%;
+  background: var(--surface-1);
   color: var(--accent);
+  box-shadow: var(--shadow-sm);
 }
 
 .tip {

@@ -5,45 +5,21 @@
         <h1>AI 工作台</h1>
         <p class="sub">统一管理模型供应商，调用兼容 chat / responses / messages 协议的网关</p>
       </div>
+      <el-segmented v-model="active" :options="sections" class="ai-tabs" />
     </header>
 
-    <div class="ai-layout">
-      <!-- 左侧竖向分类菜单 -->
-      <div class="glass nav-panel">
-        <el-menu :default-active="active" class="ai-menu" @select="onSelect">
-          <el-menu-item index="providers">
-            <el-icon><Connection /></el-icon>
-            <span>供应商管理</span>
-          </el-menu-item>
-          <el-menu-item index="agent">
-            <el-icon><ChatDotRound /></el-icon>
-            <span>AI 助手</span>
-          </el-menu-item>
-          <el-menu-item index="image">
-            <el-icon><Picture /></el-icon>
-            <span>AI 生图</span>
-          </el-menu-item>
-          <el-menu-item index="usage">
-            <el-icon><DataAnalysis /></el-icon>
-            <span>用量统计</span>
-          </el-menu-item>
-        </el-menu>
-      </div>
-
-      <!-- 右侧内容面板；AI 助手需要满幅布局，去掉内边距与滚动 -->
-      <div class="glass content-panel" :class="{ flush: active === 'agent' }">
-        <ProviderManager v-show="active === 'providers'" />
-        <AgentWorkbench v-show="active === 'agent'" />
-        <ImageGen v-show="active === 'image'" />
-        <UsageStats v-show="active === 'usage'" />
-      </div>
+    <!-- 内容面板；AI 助手需要满幅布局，去掉内边距与滚动 -->
+    <div class="glass content-panel" :class="{ flush: active === 'agent' }">
+      <ProviderManager v-show="active === 'providers'" />
+      <AgentWorkbench v-show="active === 'agent'" />
+      <ImageGen v-show="active === 'image'" />
+      <UsageStats v-show="active === 'usage'" />
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
-import { ChatDotRound, Connection, DataAnalysis, Picture } from '@element-plus/icons-vue'
 import ProviderManager from '../components/ai/ProviderManager.vue'
 import AgentWorkbench from '../components/ai/AgentWorkbench.vue'
 import ImageGen from '../components/ai/ImageGen.vue'
@@ -52,12 +28,15 @@ import { useAiProviders } from '../ai/store'
 
 defineOptions({ name: 'AIWorkbenchView' })
 
-const active = ref<'providers' | 'agent' | 'image' | 'usage'>('providers')
+type SectionId = 'providers' | 'agent' | 'image' | 'usage'
+const active = ref<SectionId>('providers')
+const sections = [
+  { label: '供应商', value: 'providers' },
+  { label: 'AI 助手', value: 'agent' },
+  { label: 'AI 生图', value: 'image' },
+  { label: '用量统计', value: 'usage' }
+]
 const { ensureLoaded } = useAiProviders()
-
-function onSelect(id: string): void {
-  active.value = id as 'providers' | 'agent' | 'image' | 'usage'
-}
 
 onMounted(() => {
   void ensureLoaded()
@@ -68,49 +47,21 @@ onMounted(() => {
 .ai-page {
   height: 100%;
   overflow: hidden;
+  gap: 14px;
 }
 
-.ai-layout {
-  display: flex;
-  align-items: stretch;
-  gap: 16px;
-  flex: 1;
-  min-height: 0;
-}
-
-.nav-panel {
-  width: 168px;
+.ai-tabs {
   flex-shrink: 0;
-  padding: 10px;
-  overflow-y: auto;
+  align-self: flex-end;
 }
 
-.ai-menu {
-  border-right: none;
-  background: transparent;
-}
-
-.ai-menu :deep(.el-menu-item) {
-  height: 40px;
-  border-radius: var(--radius-sm);
-  color: var(--ink-2);
-  transition: background 0.2s ease, color 0.2s ease;
-}
-
-.ai-menu :deep(.el-menu-item:hover) {
-  background: var(--fill-hover);
-  color: var(--ink-1);
-}
-
-.ai-menu :deep(.el-menu-item.is-active) {
-  background: var(--accent-soft);
-  color: var(--accent-strong);
-  box-shadow: inset 0 0 0 1px var(--accent-border);
+.ai-tabs :deep(.el-segmented__item) {
+  padding: 0 14px;
 }
 
 .content-panel {
   flex: 1;
-  min-width: 0;
+  min-height: 0;
   overflow-y: auto;
   padding: 18px 20px;
 }

@@ -40,9 +40,13 @@
         @content-change="onContentChange"
       />
       <div v-else class="empty glass">
-        <el-empty description="选择或创建一篇笔记开始写作">
+        <EmptyState
+          title="选择或创建一篇笔记"
+          hint="左侧目录可用于整理文件夹，支持 Markdown、图片与版本历史"
+          :icon="Document"
+        >
           <el-button type="primary" @click="createRootNote">新建笔记</el-button>
-        </el-empty>
+        </EmptyState>
       </div>
     </div>
   </div>
@@ -50,10 +54,13 @@
 
 <script setup lang="ts">
 import { computed, onActivated, onBeforeUnmount, onDeactivated, onMounted, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
+import { Document } from '@element-plus/icons-vue'
 import NoteTree from '../components/notes/NoteTree.vue'
 import NoteOutline from '../components/notes/NoteOutline.vue'
 import { notesPanelMode } from '../components/notes/panel-state'
 import NoteEditor from '../components/notes/NoteEditor.vue'
+import EmptyState from '../components/EmptyState.vue'
 import {
   createNote,
   getNote,
@@ -67,6 +74,8 @@ import {
 } from '../api/notes'
 import { extractOutline, type OutlineItem } from '../markdown/outline'
 import { ElMessage } from 'element-plus'
+
+const route = useRoute()
 
 const folders = ref<Folder[]>([])
 const notes = ref<NoteMeta[]>([])
@@ -154,10 +163,31 @@ function unbindQuickCreate(): void {
   offQuickCreate = null
 }
 
-onMounted(refreshMetas)
+// 命令面板「新建笔记」
+function onPaletteNewNote(): void {
+  void createRootNote()
+}
+
+// 从仪表盘「最近更新」跳转：/notes?note=<id>
+watch(
+  () => route.query.note,
+  (v) => {
+    const id = Number(v)
+    if (Number.isFinite(id) && id > 0) void selectNote(id)
+  },
+  { immediate: true }
+)
+
+onMounted(() => {
+  void refreshMetas()
+  window.addEventListener('mydash:new-note', onPaletteNewNote)
+})
 onActivated(bindQuickCreate)
 onDeactivated(unbindQuickCreate)
-onBeforeUnmount(unbindQuickCreate)
+onBeforeUnmount(() => {
+  unbindQuickCreate()
+  window.removeEventListener('mydash:new-note', onPaletteNewNote)
+})
 </script>
 
 <style scoped>
@@ -166,20 +196,21 @@ onBeforeUnmount(unbindQuickCreate)
   height: 100%;
   overflow: hidden;
   flex-direction: row;
-  gap: 14px;
+  gap: 16px;
 }
 
 .tree-panel {
-  width: 252px;
+  width: 268px;
   flex-shrink: 0;
-  padding: 12px;
+  padding: 10px;
   overflow: hidden;
   display: flex;
   flex-direction: column;
+  background: var(--surface-1);
 }
 
 .panel-switch {
-  margin-bottom: 8px;
+  margin-bottom: 10px;
   flex-shrink: 0;
 }
 
