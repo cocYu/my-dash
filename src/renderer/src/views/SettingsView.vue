@@ -272,6 +272,15 @@ onMounted(async () => {
   padding: 20px 22px;
 }
 
+/* 内容面板本身已经是卡片：内部的子面板（插件/同步/通知）不再重复画边框，
+   否则会在面板内再出现一圈「框中框」。 */
+.content-panel :deep(.panel) {
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+}
+
 .section-title {
   font-size: 11px;
   font-weight: 600;
