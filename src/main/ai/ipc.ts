@@ -231,14 +231,18 @@ export function registerAiIpc(toolCtx: ToolContext): void {
         }
       }
 
-      // 用户消息先落盘：即使生成失败也保留输入，便于重试
+      // 用户消息先落盘：即使生成失败也保留输入，便于重试（多模态部件只存文本）
       const lastUser = [...req.messages].reverse().find((m) => m.role === 'user')
       if (lastUser) {
+        const persisted =
+          typeof lastUser.content === 'string'
+            ? lastUser.content
+            : lastUser.content.filter((p) => p.type === 'text').map((p) => p.text).join('\n')
         try {
           appendMessage(req.sessionId, {
             id: `m-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
             role: 'user',
-            content: lastUser.content,
+            content: persisted,
             createdAt: new Date().toISOString()
           })
         } catch (err) {

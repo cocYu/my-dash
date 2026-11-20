@@ -239,9 +239,11 @@ export async function runAgentLoop(params: AgentRunParams): Promise<AgentRunResu
 }
 
 function toWireMessage(m: AiChatMessage): WireMessage {
-  if (m.role === 'system') return { role: 'system', content: m.content }
-  if (m.role === 'assistant') return { role: 'assistant', content: m.content }
-  return { role: 'user', content: m.content }
+  // Agent 工具循环只发纯文本；多模态部件（若有）降级取文本
+  const content = typeof m.content === 'string' ? m.content : m.content.filter((p) => p.type === 'text').map((p) => p.text).join('\n')
+  if (m.role === 'system') return { role: 'system', content }
+  if (m.role === 'assistant') return { role: 'assistant', content }
+  return { role: 'user', content }
 }
 
 function parseArgs(raw: string): { ok: true; value: Record<string, unknown> } | { ok: false; error: string } {

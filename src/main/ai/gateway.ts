@@ -3,7 +3,7 @@
 //   chat      → OpenAI Chat Completions   POST /v1/chat/completions
 //   responses → OpenAI Responses API      POST /v1/responses
 //   messages  → Anthropic Messages API    POST /v1/messages
-import type { AiChatMessage, AiChatRequest, AiChatResponse, AiModel, AiProvider, AiProtocol } from '../../types/ai'
+import type { AiChatContentPart, AiChatMessage, AiChatRequest, AiChatResponse, AiModel, AiProvider, AiProtocol } from '../../types/ai'
 import { appendUsage } from './usage'
 
 const DEFAULT_TIMEOUT = 120_000
@@ -57,22 +57,69 @@ async function readJson(res: Response): Promise<Record<string, unknown>> {
 
 // ---- 请求构造 ----
 
+/** data URI → { media_type, base64 }；非图片 data URI 返回 null */
+function parseDataUri(url: string): { mediaType: string; data: string } | null {
+  const m = /^data:(image\/[a-z0-9.+-]+);base64,([A-Za-z0-9+/=]+)$/i.exec(url)
+  return m ? { mediaType: m[1], data: m[2] } : null
+}
+
+/** 多模态部件按协议转换；Anthropic 的 system 不支持图片，转换时只保留文本 */
+function contentForProtocol(
+  content: AiChatMessage['content'],
+  protocol: AiProtocol
+): string | AiChatContentPart[] | Record<string, unknown>[] {
+  if (typeof content === 'string') return content
+  if (protocol === 'chat') {
+    // OpenAI Chat：部件数组格式与内部格式一致，直接透传
+    return content
+  }
+  const parts = content as AiChatContentPart[]
+  if (protocol === 'responses') {
+    // Responses API：input_text / input_image
+    return parts.map((p) =>
+      p.type === 'text'
+        ? { type: 'input_text', text: p.text }
+        : { type: 'input_image', image_url: p.image_url.url }
+    )
+  }
+  // Anthropic Messages：text 块 + base64 image 块
+  const out: Record<string, unknown>[] = []
+  for (const p of parts) {
+    if (p.type === 'text') {
+      out.push({ type: 'text', text: p.text })
+      continue
+    }
+    const img = parseDataUri(p.image_url.url)
+    if (img) out.push({ type: 'image', source: { type: 'base64', media_type: img.mediaType, data: img.data } })
+  }
+  return out
+}
+
+/** system 消息只取文本（string 直取，多模态取 text 部件拼接） */
+function systemTextOf(m: AiChatMessage): string {
+  if (typeof m.content === 'string') return m.content
+  return m.content.filter((p) => p.type === 'text').map((p) => p.text).join('\n')
+}
+
 function buildChatBody(req: AiChatRequest, protocol: AiProtocol): Record<string, unknown> {
   if (protocol === 'responses') {
     // Responses API：input 为消息数组，content 可为字符串或 input_text 块
     return {
       model: req.model,
-      input: req.messages.map((m) => ({ role: m.role, content: m.content })),
+      input: req.messages.map((m) => ({
+        role: m.role,
+        content: contentForProtocol(m.content, protocol)
+      })),
       ...(req.temperature !== undefined ? { temperature: req.temperature } : {}),
       ...(req.maxTokens !== undefined ? { max_output_tokens: req.maxTokens } : {})
     }
   }
   if (protocol === 'messages') {
     // Anthropic：system 单列顶层，messages 仅 user/assistant
-    const system = req.messages.filter((m) => m.role === 'system').map((m) => m.content).join('\n')
+    const system = req.messages.filter((m) => m.role === 'system').map(systemTextOf).join('\n')
     const turns = req.messages
       .filter((m) => m.role !== 'system')
-      .map((m) => ({ role: m.role, content: m.content }))
+      .map((m) => ({ role: m.role, content: contentForProtocol(m.content, protocol) }))
     return {
       model: req.model,
       max_tokens: req.maxTokens ?? 4096,
@@ -84,7 +131,7 @@ function buildChatBody(req: AiChatRequest, protocol: AiProtocol): Record<string,
   // OpenAI Chat Completions
   return {
     model: req.model,
-    messages: req.messages.map((m) => ({ role: m.role, content: m.content })),
+    messages: req.messages.map((m) => ({ role: m.role, content: contentForProtocol(m.content, protocol) })),
     ...(req.temperature !== undefined ? { temperature: req.temperature } : {}),
     ...(req.maxTokens !== undefined ? { max_tokens: req.maxTokens } : {})
   }

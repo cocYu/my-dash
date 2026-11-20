@@ -32,9 +32,16 @@ export function estimateTokens(text: string): number {
   return Math.ceil(wide + narrow / 3.6)
 }
 
-/** 单条消息的估算（含 4 token 结构开销） */
+/** 单条消息的估算（含 4 token 结构开销；图片部件按 1k token 粗估） */
 export function estimateMessageTokens(m: AiChatMessage): number {
-  return estimateTokens(m.content) + 4
+  if (typeof m.content === 'string') return estimateTokens(m.content) + 4
+  let text = ''
+  let images = 0
+  for (const p of m.content) {
+    if (p.type === 'text') text += p.text
+    else images++
+  }
+  return estimateTokens(text) + images * 1000 + 4
 }
 
 export function estimateMessagesTokens(msgs: AiChatMessage[]): number {

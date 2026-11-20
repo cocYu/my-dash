@@ -35,10 +35,21 @@ export interface AiProvider {
   hasApiKey?: boolean
 }
 
-/** 统一内部聊天消息 */
+/** 多模态消息部件：文本或图片（url 为 data URI，网关层按供应商协议转换） */
+export interface AiTextPart {
+  type: 'text'
+  text: string
+}
+export interface AiImagePart {
+  type: 'image_url'
+  image_url: { url: string }
+}
+export type AiChatContentPart = AiTextPart | AiImagePart
+
+/** 统一内部聊天消息。content 为纯文本或多模态部件数组（vision 模型用） */
 export interface AiChatMessage {
   role: 'system' | 'user' | 'assistant'
-  content: string
+  content: string | AiChatContentPart[]
 }
 
 /** 统一内部聊天请求 */
