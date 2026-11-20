@@ -264,6 +264,36 @@ const commands = computed<Command[]>(() => {
         window.setTimeout(() => window.dispatchEvent(new CustomEvent('mydash:new-todo')), 60)
       }
     },
+    ...(
+      [
+        ['today', '待办：今日视图', 'jinri today'],
+        ['list', '待办：列表视图', 'liebiao list'],
+        ['kanban', '待办：看板视图', 'kanban board']
+      ] as [string, string, string][]
+    ).map(([view, title, keywords]) => ({
+      id: `action:todo-view-${view}`,
+      title,
+      hint: '待办',
+      icon: Plus,
+      group: '操作',
+      keywords,
+      run: () => {
+        go('/todos')
+        window.setTimeout(() => window.dispatchEvent(new CustomEvent('mydash:todo-view', { detail: view })), 60)
+      }
+    })),
+    {
+      id: 'action:todo-trash',
+      title: '待办：打开回收站',
+      hint: '待办',
+      icon: Plus,
+      group: '操作',
+      keywords: 'huishoudai trash recycle bin',
+      run: () => {
+        go('/todos')
+        window.setTimeout(() => window.dispatchEvent(new CustomEvent('mydash:todo-trash')), 60)
+      }
+    },
     {
       id: 'action:theme',
       title: isDark.value ? '切换到浅色模式' : '切换到深色模式',

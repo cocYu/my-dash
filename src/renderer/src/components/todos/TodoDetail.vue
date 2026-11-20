@@ -36,20 +36,26 @@
         :clearable="true"
       />
       <label>截止时间</label>
-      <el-date-picker
-        v-model="draft.dueAt"
-        type="datetime"
-        size="small"
-        placeholder="可选"
-        format="YYYY-MM-DD HH:mm"
-        :clearable="true"
-      />
+      <div class="due-cell">
+        <el-date-picker
+          v-model="draft.dueAt"
+          :type="draft.allDay ? 'date' : 'datetime'"
+          size="small"
+          placeholder="可选"
+          :format="draft.allDay ? 'YYYY-MM-DD（全天）' : 'YYYY-MM-DD HH:mm'"
+          :clearable="true"
+          class="due-picker"
+        />
+        <el-checkbox v-model="draft.allDay" size="small" @change="onAllDayToggle">全天</el-checkbox>
+      </div>
       <label>超时提醒</label>
       <div class="warn-cell">
-        <el-checkbox-group v-model="draft.warnOffsets" :disabled="!draft.dueAt" class="warn-group" size="small">
+        <el-checkbox-group v-model="draft.warnOffsets" :disabled="!draft.dueAt || draft.allDay" class="warn-group" size="small">
           <el-checkbox v-for="opt in WARN_OFFSET_PRESETS" :key="opt.minutes" :value="opt.minutes" :label="opt.label" />
         </el-checkbox-group>
-        <span v-if="draft.warnOffsets.length === 0" class="warn-none">{{ draft.dueAt ? '不提醒' : '先设置截止时间' }}</span>
+        <span v-if="draft.warnOffsets.length === 0" class="warn-none">
+          {{ draft.allDay ? '全天事件按整天提醒，不设提前量' : draft.dueAt ? '不提醒' : '先设置截止时间' }}
+        </span>
       </div>
       <label>重复</label>
       <div v-if="!isSubtask" class="rec-cell">
@@ -139,21 +145,15 @@
       <div v-for="cm in comments" :key="cm.id" class="comment-row">
         <div class="comment-body">
           <div class="comment-time">{{ fmtTime(cm.created_at) }}</div>
-          <div class="comment-text">{{ cm.content }}</div>
+          <!-- eslint-disable-next-line vue/no-v-html -- 入库前已消毒，历史纯文本再转义 -->
+          <div class="comment-text rich" v-html="commentHtml(cm.content)" />
         </div>
         <el-icon class="row-del" title="删除评论" @click="removeComment(cm)"><DeleteIcon /></el-icon>
       </div>
       <div v-if="comments.length === 0" class="comment-empty">还没有评论</div>
       <div class="comment-input">
-        <el-input
-          v-model="newComment"
-          type="textarea"
-          :rows="2"
-          size="small"
-          placeholder="记录一些事情…（Ctrl+Enter 发送）"
-          @keydown="onCommentKeydown"
-        />
-        <el-button size="small" type="primary" :disabled="!newComment.trim()" @click="submitComment">发送</el-button>
+        <RichTextEditor v-model="newComment" placeholder="记录一些事情…" />
+        <el-button size="small" type="primary" :disabled="!commentPlain" @click="submitComment">发送</el-button>
       </div>
     </div>
   </div>
@@ -167,6 +167,7 @@ import {
   Finished as SelectIcon
 } from '@element-plus/icons-vue'
 import RichTextEditor from './RichTextEditor.vue'
+import { sanitizeHtml } from '../../utils/rich-text'
 import {
   addComment,
   createTodo,
@@ -210,12 +211,21 @@ const draft = reactive({
   priority: 4,
   startAt: null as Date | null,
   dueAt: null as Date | null,
+  allDay: false,
   warnOffsets: [] as number[],
   recType: '' as RecType,
   recInterval: 1,
   tags: [] as string[],
   description: ''
 })
+
+/** 全天切换：开启 → 当天零点（无截止则取今天）；关闭 → 当天 9 点 */
+function onAllDayToggle(on: boolean | string | number): void {
+  const base = draft.dueAt ?? new Date()
+  const day = new Date(base.getFullYear(), base.getMonth(), base.getDate())
+  draft.dueAt = on ? day : new Date(day.getTime() + 9 * 3_600_000)
+  if (on) draft.warnOffsets = []
+}
 
 const isSubtask = computed(() => props.todo?.parent_id != null)
 const recHint = computed(() => REC_TYPES.find((r) => r.value === draft.recType)?.hint ?? '')
@@ -225,6 +235,16 @@ const newComment = ref('')
 const comments = ref<TodoComment[]>([])
 let saveTimer: ReturnType<typeof setTimeout> | null = null
 let applying = false
+
+/** 评论展示：历史纯文本转义 + 换行转 <br>；富文本过一遍消毒白名单 */
+function commentHtml(content: string): string {
+  if (/<\/?[a-z][^>]*>/i.test(content)) return sanitizeHtml(content)
+  const escaped = content.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  return escaped.replace(/\n/g, '<br>')
+}
+
+/** 评论是否有效（剥掉标签后还有内容） */
+const commentPlain = computed(() => newComment.value.replace(/<[^>]*>/g, '').trim().length > 0)
 
 // ---- 装载 ----
 function seed(): void {
@@ -236,6 +256,7 @@ function seed(): void {
   draft.priority = t?.priority ?? 4
   draft.startAt = toDateInput(t?.start_at ?? null)
   draft.dueAt = toDateInput(t?.due_at ?? null)
+  draft.allDay = t?.all_day ?? false
   draft.warnOffsets = t ? effectiveWarnOffsets(t) : []
   draft.recType = t?.rec_type ?? ''
   draft.recInterval = t?.rec_interval || 1
@@ -275,8 +296,12 @@ async function save(): Promise<void> {
   }
   if ((toDateInput(t.due_at) ?? null)?.getTime() !== (draft.dueAt ?? null)?.getTime()) {
     patch.due_at = draft.dueAt ? draft.dueAt.toISOString() : null
-    if (!draft.dueAt) draft.warnOffsets = []
+    if (!draft.dueAt) {
+      draft.warnOffsets = []
+      if (draft.allDay) draft.allDay = false
+    }
   }
+  if (draft.allDay !== t.all_day) patch.all_day = draft.allDay
   if (JSON.stringify([...draft.warnOffsets].sort((a, b) => a - b)) !== JSON.stringify(effectiveWarnOffsets(t))) {
     patch.warn_offsets = [...draft.warnOffsets]
   }
@@ -325,8 +350,8 @@ async function remove(): Promise<void> {
 function dueTextOf(t: Todo): string {
   if (!t.due_at) return ''
   const state = dueState(t)
-  if (state === 'none') return formatDue(t.due_at)
-  return `${formatDue(t.due_at)} · ${untilDueText(t)}`
+  if (state === 'none') return formatDue(t.due_at, t.all_day)
+  return `${formatDue(t.due_at, t.all_day)} · ${untilDueText(t)}`
 }
 
 async function toggleSub(sub: Todo, checked: boolean): Promise<void> {
@@ -363,18 +388,10 @@ function fmtTime(iso: string): string {
 }
 
 async function submitComment(): Promise<void> {
-  const content = newComment.value.trim()
-  if (!content || !props.todo) return
-  const cm = await addComment(props.todo.id, content)
+  if (!commentPlain.value || !props.todo) return
+  const cm = await addComment(props.todo.id, newComment.value)
   comments.value.push(cm)
   newComment.value = ''
-}
-
-function onCommentKeydown(e: KeyboardEvent): void {
-  if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
-    e.preventDefault()
-    void submitComment()
-  }
 }
 
 async function removeComment(cm: TodoComment): Promise<void> {
@@ -389,6 +406,10 @@ const dueText = computed(() => {
   if (!t) return { badge: '', state: 'none' as string }
   const state = dueState(t)
   if (state === 'none') return { badge: '', state }
+  if (t.all_day && t.due_at) {
+    const days = Math.max(1, Math.ceil((Date.now() - Date.parse(t.due_at)) / 86_400_000))
+    return { badge: `已超时 ${days} 天`, state }
+  }
   if (state === 'overdue') return { badge: `已超时 · ${untilDueText(t)}`, state }
   return { badge: `即将超时 · ${untilDueText(t)}`, state }
 })
@@ -535,6 +556,23 @@ const dueText = computed(() => {
   width: 100%;
 }
 
+.due-cell {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.due-cell :deep(.el-date-editor) {
+  flex: 1;
+  min-width: 0;
+}
+
+.due-cell .el-checkbox {
+  flex-shrink: 0;
+  height: auto;
+  margin-right: 2px;
+}
+
 .p-dot {
   display: inline-block;
   width: 8px;
@@ -675,6 +713,24 @@ const dueText = computed(() => {
   word-break: break-word;
 }
 
+.comment-text.rich {
+  white-space: normal;
+}
+
+.comment-text.rich :deep(p) {
+  margin: 0 0 4px;
+}
+
+.comment-text.rich :deep(p:last-child) {
+  margin-bottom: 0;
+}
+
+.comment-text.rich :deep(ul),
+.comment-text.rich :deep(ol) {
+  margin: 2px 0 4px;
+  padding-left: 20px;
+}
+
 .comment-empty {
   font-size: 12px;
   color: var(--ink-3);
@@ -689,7 +745,8 @@ const dueText = computed(() => {
   margin-top: 4px;
 }
 
-.comment-input :deep(.el-textarea) {
+.comment-input :deep(.el-textarea),
+.comment-input :deep(.rte) {
   width: 100%;
 }
 </style>

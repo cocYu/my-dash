@@ -56,6 +56,7 @@ func New(folderHandler *api.FolderHandler, noteHandler *api.NoteHandler, version
 
 		// 待办
 		apiGroup.GET("/todos", todoHandler.List)
+		apiGroup.GET("/todos/search", todoHandler.Search)
 		apiGroup.POST("/todos", todoHandler.Create)
 		apiGroup.PUT("/todos/:id", todoHandler.Update)
 		apiGroup.POST("/todos/:id/status", todoHandler.SetStatus)

@@ -80,6 +80,7 @@ async function onEnter(e: KeyboardEvent): Promise<void> {
       category_id: parsedNow.categoryName ? undefined : props.defaultCategoryId ?? undefined,
       priority: parsedNow.priority ?? undefined,
       due_at: parsedNow.dueAt ?? undefined,
+      all_day: parsedNow.allDay || undefined,
       tags: parsedNow.tags.length ? parsedNow.tags : undefined
     })
     clear()

@@ -196,6 +196,15 @@ func Migrate(d *sql.DB) error {
 			return fmt.Errorf("set user_version: %w", err)
 		}
 	}
+	if version < 6 {
+		// v6：待办全天事件（due_at 存当天零点的本地时间 ISO，展示与提醒按整天处理）
+		if _, err := d.Exec(`ALTER TABLE todos ADD COLUMN all_day INTEGER NOT NULL DEFAULT 0`); err != nil {
+			return fmt.Errorf("migrate v6: %w", err)
+		}
+		if _, err := d.Exec("PRAGMA user_version = 6"); err != nil {
+			return fmt.Errorf("set user_version: %w", err)
+		}
+	}
 	return nil
 }
 

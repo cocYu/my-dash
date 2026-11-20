@@ -34,8 +34,10 @@ func newTodoTestEnv(t *testing.T) (*TodoHandler, *gin.Engine) {
 	r.POST("/api/todos/:id/purge", h.Purge)
 	r.GET("/api/todos", h.List)
 	r.GET("/api/todos/trash", h.ListTrash)
+	r.GET("/api/todos/search", h.Search)
 	r.POST("/api/todos/batch", h.Batch)
 	r.POST("/api/todos/sort", h.Sort)
+	r.POST("/api/todos/:id/comments", h.CreateComment)
 	return h, r
 }
 
@@ -285,6 +287,94 @@ func TestBatchAndSort(t *testing.T) {
 	for _, td := range listResp.Data {
 		if td.ID == 2 && (len(td.Tags) != 1 || td.Tags[0] != "y") {
 			t.Fatalf("id=2 移除 x 后应只剩 y: %+v", td.Tags)
+		}
+	}
+}
+
+// 全文搜索：标题/副标题/描述/评论命中；HTML 富文本内关键词可命中
+func TestSearchFullText(t *testing.T) {
+	_, r := newTodoTestEnv(t)
+	mk := func(payload map[string]any) {
+		w := doJSON(t, r, http.MethodPost, "/api/todos", payload)
+		if w.Code != http.StatusCreated {
+			t.Fatalf("create: %d %s", w.Code, w.Body.String())
+		}
+	}
+	mk(map[string]any{"title": "alpha-plain"})
+	mk(map[string]any{"title": "beta-doc", "description": "<p>包含<b>关键词</b>的富文本</p>"})
+	mk(map[string]any{"title": "gamma-note", "tags": []string{"x"}})
+
+	// 给 gamma 加一条评论（命中评论内容）
+	w := doJSON(t, r, http.MethodPost, "/api/todos/3/comments", map[string]any{"content": "评论里提到数据库迁移"})
+	if w.Code != http.StatusCreated {
+		t.Fatalf("comment: %d %s", w.Code, w.Body.String())
+	}
+
+	type searchResp struct {
+		Data []int64 `json:"data"`
+	}
+	search := func(q string) map[int64]bool {
+		ws := doJSON(t, r, http.MethodGet, "/api/todos/search?q="+q, nil)
+		var sr searchResp
+		_ = json.Unmarshal(ws.Body.Bytes(), &sr)
+		set := map[int64]bool{}
+		for _, id := range sr.Data {
+			set[id] = true
+		}
+		return set
+	}
+	if !search("alpha")[1] || len(search("alpha")) != 1 {
+		t.Fatalf("标题命中失败: %v", search("alpha"))
+	}
+	if !search("关键词")[2] {
+		t.Fatalf("富文本描述命中失败: %v", search("关键词"))
+	}
+	if !search("数据库迁移")[3] {
+		t.Fatalf("评论内容命中失败: %v", search("数据库迁移"))
+	}
+	if len(search("%")) != 0 {
+		t.Fatalf("LIKE 通配符应被转义为字面量: %v", search("%"))
+	}
+	if len(search("")) != 0 {
+		t.Fatal("空关键词应返回空")
+	}
+}
+
+// 全天事件：完成生成下一期保持零点；字段回读 all_day 正确
+func TestAllDayFlow(t *testing.T) {
+	_, r := newTodoTestEnv(t)
+	due := "2026-11-21T00:00:00+08:00"
+	w := doJSON(t, r, http.MethodPost, "/api/todos", map[string]any{"title": "allday-task", "due_at": due, "all_day": true})
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create: %d %s", w.Code, w.Body.String())
+	}
+	var createResp struct {
+		Data Todo `json:"data"`
+	}
+	_ = json.Unmarshal(w.Body.Bytes(), &createResp)
+	if !createResp.Data.AllDay {
+		t.Fatalf("all_day 应为 true: %+v", createResp.Data)
+	}
+	// 完成生成下一期（daily +1 天，仍是全天）
+	w = doJSON(t, r, http.MethodPost, "/api/todos/1/status", map[string]any{"status": "done"})
+	if w.Code != http.StatusOK {
+		t.Fatalf("done: %d", w.Code)
+	}
+	w = doJSON(t, r, http.MethodGet, "/api/todos", nil)
+	var listResp struct {
+		Data []Todo `json:"data"`
+	}
+	_ = json.Unmarshal(w.Body.Bytes(), &listResp)
+	for _, td := range listResp.Data {
+		if td.Status == "open" {
+			if !td.AllDay {
+				t.Fatalf("下一期应保持全天: %+v", td)
+			}
+			d1, _ := time.Parse(time.RFC3339, due)
+			d2, _ := time.Parse(time.RFC3339, *td.DueAt)
+			if d2.Sub(d1) != 24*time.Hour {
+				t.Fatalf("下一期应 +1 天: %v -> %v", due, *td.DueAt)
+			}
 		}
 	}
 }

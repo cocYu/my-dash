@@ -32,7 +32,7 @@
           </div>
           <div class="card-foot">
             <span v-if="t.sub_total > 0" class="sub-chip">{{ t.sub_done }}/{{ t.sub_total }} 子任务</span>
-            <span class="card-due">{{ t.due_at ? formatDue(t.due_at) : '' }}</span>
+            <span class="card-due">{{ t.due_at ? formatDue(t.due_at, t.all_day) : '' }}</span>
           </div>
         </div>
         <div v-if="columnItems(col.key).length === 0" class="col-empty">{{ col.empty }}</div>

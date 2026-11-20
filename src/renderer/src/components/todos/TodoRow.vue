@@ -1,6 +1,7 @@
 <template>
   <div
     class="todo-row"
+    :data-todo-id="todo.id"
     :class="{
       selected,
       closed: todo.status === 'closed',
@@ -56,7 +57,7 @@
         >{{ todo.sub_done }}/{{ todo.sub_total }} 子任务</span>
       </div>
     </div>
-    <span class="row-due">{{ todo.due_at ? formatDue(todo.due_at) : '' }}</span>
+    <span class="row-due">{{ todo.due_at ? formatDue(todo.due_at, todo.all_day) : '' }}</span>
   </div>
 </template>
 

@@ -366,6 +366,7 @@ import {
   purgeTodo,
   renameTodoCategory,
   restoreTodo,
+  searchTodoIds,
   setTodoStatus,
   sortTodos,
   updateTodo,
@@ -475,9 +476,38 @@ function matchTag(t: Todo): boolean {
   return filterTag.value == null || t.tags.includes(filterTag.value)
 }
 
+/** 全文搜索命中集（标题/副标题/描述/评论，后端检索）；null = 无关键词或接口未就绪 */
+const searchIds = ref<Set<number> | null>(null)
+let searchSeq = 0
+let searchTimer: ReturnType<typeof setTimeout> | null = null
+
+watch(search, (kw) => {
+  if (searchTimer) clearTimeout(searchTimer)
+  const seq = ++searchSeq
+  const q = kw.trim()
+  if (!q) {
+    searchIds.value = null
+    return
+  }
+  // 300ms 防抖（与实时解析类输入一致）
+  searchTimer = setTimeout(() => {
+    void searchTodoIds(q)
+      .then((ids) => {
+        if (seq === searchSeq) searchIds.value = new Set(ids)
+      })
+      .catch(() => {
+        if (seq === searchSeq) searchIds.value = null
+      })
+  }, 300)
+})
+
 function matchSearch(t: Todo): boolean {
   const kw = search.value.trim().toLowerCase()
-  return !kw || `${t.title} ${t.subtitle}`.toLowerCase().includes(kw)
+  if (!kw) return true
+  // 全文命中集优先；接口未就绪时退回本地标题匹配
+  return searchIds.value
+    ? searchIds.value.has(t.id)
+    : `${t.title} ${t.subtitle}`.toLowerCase().includes(kw)
 }
 
 function matchDue(t: Todo): boolean {
@@ -989,15 +1019,104 @@ async function clearTrash(): Promise<void> {
 const categoryNames = computed(() => categories.value.map((c) => c.name))
 const defaultCategoryId = computed(() => (typeof filterCategory.value === 'number' ? filterCategory.value : null))
 
+// ---- 键盘导航：j/k 上下移动、e 完成/重开、n 聚焦快速添加、Delete 移入回收站 ----
+function isTypingTarget(e: KeyboardEvent): boolean {
+  const el = e.target as HTMLElement | null
+  if (!el) return false
+  const tag = el.tagName
+  return (
+    tag === 'INPUT' ||
+    tag === 'TEXTAREA' ||
+    el.isContentEditable ||
+    !!el.closest('.el-dialog, .el-select, .el-date-editor, .el-message-box')
+  )
+}
+
+/** 当前视图下可被键盘选中的顶层待办（今日/列表/看板各自的数据源） */
+const selectableIds = computed<number[]>(() => {
+  if (viewMode.value === 'list') return visibleItems.value.map((i) => i.todo.id)
+  if (viewMode.value === 'today') return todayGroups.value.flatMap((g) => g.items.map((i) => i.todo.id))
+  return kanbanItems.value.map((t) => t.id)
+})
+
+function scrollSelectedIntoView(): void {
+  if (selectedId.value == null) return
+  document
+    .querySelector(`[data-todo-id="${selectedId.value}"]`)
+    ?.scrollIntoView({ block: 'nearest' })
+}
+
+function onKeydown(e: KeyboardEvent): void {
+  if (e.ctrlKey || e.metaKey || e.altKey || e.isComposing) return
+  if (isTypingTarget(e) || batchMode.value || trashOpen.value) return
+  const ids = selectableIds.value
+  if (ids.length === 0) return
+  const idx = selectedId.value != null ? ids.indexOf(selectedId.value) : -1
+  switch (e.key) {
+    case 'j':
+    case 'J':
+    case 'ArrowDown': {
+      e.preventDefault()
+      selectedId.value = ids[Math.min(idx + 1, ids.length - 1)] ?? ids[0]
+      scrollSelectedIntoView()
+      break
+    }
+    case 'k':
+    case 'K':
+    case 'ArrowUp': {
+      e.preventDefault()
+      selectedId.value = idx <= 0 ? ids[0] : ids[idx - 1]
+      scrollSelectedIntoView()
+      break
+    }
+    case 'e':
+    case 'E': {
+      const t = selected.value
+      if (t) {
+        e.preventDefault()
+        void toggleDone(t, t.status !== 'done')
+      }
+      break
+    }
+    case 'n':
+    case 'N': {
+      e.preventDefault()
+      quickAddRef.value?.focus()
+      break
+    }
+    case 'Delete': {
+      const t = selected.value
+      if (t) {
+        e.preventDefault()
+        void removeRow(t)
+      }
+      break
+    }
+  }
+}
+
 onMounted(() => {
   void refresh()
   window.addEventListener('mydash:new-todo', onPaletteNewTodo)
+  window.addEventListener('mydash:todo-view', onPaletteView)
+  window.addEventListener('mydash:todo-trash', onPaletteTrash)
+  window.addEventListener('keydown', onKeydown)
 })
 
 // 命令面板「新建待办」
 function onPaletteNewTodo(): void {
   if (viewMode.value === 'kanban') viewMode.value = 'list'
   void createTodoRoot()
+}
+
+// 命令面板：切换待办视图 / 打开回收站
+function onPaletteView(e: Event): void {
+  const v = (e as CustomEvent<string>).detail
+  if (v === 'today' || v === 'list' || v === 'kanban') viewMode.value = v
+}
+
+function onPaletteTrash(): void {
+  trashOpen.value = true
 }
 
 // App.vue 用 keep-alive 缓存页面，切回待办页不会重新挂载。
@@ -1011,7 +1130,12 @@ onActivated(() => {
   void refresh()
 })
 
-onBeforeUnmount(() => window.removeEventListener('mydash:new-todo', onPaletteNewTodo))
+onBeforeUnmount(() => {
+  window.removeEventListener('mydash:new-todo', onPaletteNewTodo)
+  window.removeEventListener('mydash:todo-view', onPaletteView)
+  window.removeEventListener('mydash:todo-trash', onPaletteTrash)
+  window.removeEventListener('keydown', onKeydown)
+})
 </script>
 
 <style scoped>

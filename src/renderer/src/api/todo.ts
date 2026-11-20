@@ -18,6 +18,8 @@ export interface Todo {
   status: TodoStatus
   start_at: string | null
   due_at: string | null
+  /** 全天事件：due_at 为当天零点，展示与提醒按整天处理 */
+  all_day: boolean
   /** 距截止时间多少分钟标记为「即将超时」；null 不提示（旧单档字段，warn_offsets 为空时兜底） */
   warn_minutes: number | null
   /** 多档提前提醒（分钟，升序）；空数组时退化用 warn_minutes */
@@ -61,6 +63,10 @@ export interface TodoComment {
 // ---- 待办 ----
 export function listTodos(): Promise<Todo[]> {
   return request<Todo[]>({ url: '/api/todos', method: 'GET' })
+}
+/** 全文搜索标题/副标题/描述/评论，返回命中的待办 ID 列表 */
+export function searchTodoIds(q: string): Promise<number[]> {
+  return request<number[]>({ url: '/api/todos/search', method: 'GET', params: { q } })
 }
 export function createTodo(data: Partial<Todo> & { title: string; tags?: string[] }): Promise<Todo> {
   return request<Todo>({ url: '/api/todos', method: 'POST', data })
@@ -154,24 +160,39 @@ export function priorityMeta(value: number): PriorityMeta {
 
 export type DueState = 'none' | 'soon' | 'overdue'
 
-/** 截止时间状态：仅对待处理任务生效；warn_minutes 配置了才提示「即将超时」 */
+const DAY = 86_400_000
+
+/** 截止时间状态：仅对待处理任务生效；全天事件跨过整天才算已超时，且无「即将超时」窗口 */
 export function dueState(t: Todo, now = Date.now()): DueState {
   if (!t.due_at || t.status !== 'open') return 'none'
   const due = Date.parse(t.due_at)
   if (Number.isNaN(due)) return 'none'
+  if (t.all_day) {
+    return now >= due + DAY ? 'overdue' : 'none'
+  }
   if (now >= due) return 'overdue'
-  if (t.warn_minutes != null && now >= due - t.warn_minutes * 60000) return 'soon'
+  // 多档提醒取最大提前量判断「即将超时」窗口
+  const offsets = effectiveWarnOffsets(t)
+  const maxOffset = offsets.length > 0 ? offsets[offsets.length - 1] : 0
+  if (maxOffset > 0 && now >= due - maxOffset * 60000) return 'soon'
   return 'none'
 }
 
-/** 截止时间的紧凑展示：今天/明天 + HH:mm，更早/更晚用完整日期 */
-export function formatDue(iso: string, now = new Date()): string {
+/** 截止时间的紧凑展示：今天/明天 + HH:mm，更早/更晚用完整日期；全天事件只展示日期 */
+export function formatDue(iso: string, allDay = false, now = new Date()): string {
   const d = new Date(iso)
   if (Number.isNaN(d.getTime())) return ''
   const pad = (n: number): string => String(n).padStart(2, '0')
-  const hm = `${pad(d.getHours())}:${pad(d.getMinutes())}`
   const dayStart = (x: Date): number => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime()
-  const diffDays = Math.round((dayStart(d) - dayStart(now)) / 86400000)
+  const diffDays = Math.round((dayStart(d) - dayStart(now)) / DAY)
+  if (allDay) {
+    if (diffDays === 0) return '今天'
+    if (diffDays === 1) return '明天'
+    if (diffDays === -1) return '昨天'
+    const sameYear = d.getFullYear() === now.getFullYear()
+    return `${sameYear ? '' : `${d.getFullYear()}-`}${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+  }
+  const hm = `${pad(d.getHours())}:${pad(d.getMinutes())}`
   if (diffDays === 0) return `今天 ${hm}`
   if (diffDays === 1) return `明天 ${hm}`
   if (diffDays === -1) return `昨天 ${hm}`

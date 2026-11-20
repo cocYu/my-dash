@@ -2,7 +2,8 @@
 // 语法：`#标签`、`@分类`（需能匹配到已知分类）、`!P2` 或 `!2`（P0-P6）、
 // 日期：`今天/今日 明天 后天 大后天 周X/星期X/礼拜X（本周X、下周X、下下周X）`、相对 `+3d +2w +4h`、
 // 时刻：`下午3点 上午9:30 晚上8点半 中午12点 15:00`（必须带「点/时/冒号」，普通数字不误判）。
-// 裸日期默认 17:00 截止；裸时刻已过点 → 自动排到明天；识别不了的片段原样保留在标题里。
+// 裸日期 → 全天事件（due 存当天零点）；带时刻 → 定时；裸时刻已过点 → 自动排到明天；
+// 识别不了的片段原样保留在标题里。
 export interface QuickAddParsed {
   title: string
   priority: number | null
@@ -10,13 +11,12 @@ export interface QuickAddParsed {
   categoryName: string | null
   /** ISO 字符串；未解析出日期为 null */
   dueAt: string | null
+  /** 裸日期（无时刻）→ 全天事件 */
+  allDay: boolean
 }
 
 const WEEKDAY_CHARS: Record<string, number> = { 一: 1, 二: 2, 三: 3, 四: 4, 五: 5, 六: 6, 日: 0, 天: 0 }
 const DAY = 86_400_000
-
-/** 裸日期（没写时刻）的默认截止时刻：当天 17:00 */
-const DEFAULT_HOUR = 17
 
 interface DateHit {
   /** 当天零点的时间戳 */
@@ -79,6 +79,7 @@ export function parseQuickAdd(input: string, categoryNames: string[] = []): Quic
   let priority: number | null = null
   let categoryName: string | null = null
   let dueMs: number | null = null
+  let allDay = false
 
   // 优先级：!P2 / !2（前后需有边界）
   const pm = /(?:^|\s)!(?:P|p)?([0-6])(?=\s|$)/.exec(rest)
@@ -104,7 +105,7 @@ export function parseQuickAdd(input: string, categoryNames: string[] = []): Quic
     }
   }
 
-  // 相对日期：+3d +2w +4h
+  // 相对日期：+3d +2w +4h（保持当前时刻锚点，不是全天）
   const rm = /(?:^|\s)\+(\d{1,3})([dhw])(?=\s|$)/i.exec(rest)
   if (rm) {
     const n = Number(rm[1])
@@ -120,7 +121,9 @@ export function parseQuickAdd(input: string, categoryNames: string[] = []): Quic
         dueMs = date.dayStart + time.hour * 3_600_000 + time.minute * 60_000
         rest = rest.replace(date.raw, ' ').replace(time.raw, ' ')
       } else {
-        dueMs = date.dayStart + DEFAULT_HOUR * 3_600_000
+        // 裸日期 → 全天事件（当天零点）
+        allDay = true
+        dueMs = date.dayStart
         rest = rest.replace(date.raw, ' ')
       }
     } else if (time) {
@@ -138,6 +141,7 @@ export function parseQuickAdd(input: string, categoryNames: string[] = []): Quic
     priority,
     tags: [...new Set(tags)],
     categoryName,
-    dueAt: dueMs != null ? new Date(dueMs).toISOString() : null
+    dueAt: dueMs != null ? new Date(dueMs).toISOString() : null,
+    allDay
   }
 }

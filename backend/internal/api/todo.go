@@ -30,6 +30,8 @@ type Todo struct {
 	Status      string   `json:"status"`
 	StartAt     *string  `json:"start_at"`
 	DueAt       *string  `json:"due_at"`
+	// 全天事件：due_at 存当天零点的本地时间 ISO；展示与提醒按整天处理（当天 9 点提醒，跨天才算超时）
+	AllDay      bool     `json:"all_day"`
 	WarnMinutes *int     `json:"warn_minutes"`
 	WarnOffsets []int    `json:"warn_offsets"`
 	RecType     string   `json:"rec_type"`
@@ -72,18 +74,20 @@ type TodoHandler struct {
 
 func NewTodoHandler(db *sql.DB) *TodoHandler { return &TodoHandler{db: db} }
 
-const todoCols = "id, category_id, parent_id, title, subtitle, description, priority, status, start_at, due_at, warn_minutes, warn_offsets, rec_type, rec_interval, sort, completed_at, created_at, updated_at, deleted_at"
+const todoCols = "id, category_id, parent_id, title, subtitle, description, priority, status, start_at, due_at, all_day, warn_minutes, warn_offsets, rec_type, rec_interval, sort, completed_at, created_at, updated_at, deleted_at"
 
 // scanTodo 把一行 todos 记录扫进 Todo（warn_offsets/deleted_at 存 TEXT，判空转换）。
 func scanTodo(scan func(dest ...any) error) (Todo, error) {
 	var t Todo
 	t.Tags = []string{}
 	var warnOffsets, deletedAt sql.NullString
+	var allDay int
 	if err := scan(&t.ID, &t.CategoryID, &t.ParentID, &t.Title, &t.Subtitle, &t.Description,
-		&t.Priority, &t.Status, &t.StartAt, &t.DueAt, &t.WarnMinutes, &warnOffsets,
+		&t.Priority, &t.Status, &t.StartAt, &t.DueAt, &allDay, &t.WarnMinutes, &warnOffsets,
 		&t.RecType, &t.RecInterval, &t.Sort, &t.CompletedAt, &t.CreatedAt, &t.UpdatedAt, &deletedAt); err != nil {
 		return t, err
 	}
+	t.AllDay = allDay != 0
 	t.WarnOffsets = parseOffsets(warnOffsets)
 	if deletedAt.Valid {
 		t.DeletedAt = &deletedAt.String
@@ -111,6 +115,13 @@ func offsetsJSON(offsets []int) any {
 		return nil
 	}
 	return string(b)
+}
+
+func boolInt(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
 }
 
 // normalizeOffsets 去重/去负/截断（最多 8 档），并升序排列。
@@ -202,6 +213,37 @@ func (h *TodoHandler) enrich(list []Todo, includeDeletedChildren bool) {
 	}
 }
 
+// Search GET /api/todos/search?q=... —— 全文检索标题/副标题/描述/评论内容，返回命中的待办 ID。
+func (h *TodoHandler) Search(c *gin.Context) {
+	q := strings.TrimSpace(c.Query("q"))
+	if q == "" {
+		respondOK(c, http.StatusOK, []int64{})
+		return
+	}
+	// 转义 LIKE 通配符，按字面量匹配
+	q = strings.ReplaceAll(strings.ReplaceAll(q, "\\", "\\\\"), "%", "\\%")
+	like := "%" + q + "%"
+	rows, err := h.db.Query(`
+		SELECT DISTINCT t.id FROM todos t
+		LEFT JOIN todo_comments tc ON tc.todo_id = t.id
+		WHERE t.deleted_at IS NULL
+		  AND (t.title LIKE ? ESCAPE '\' OR t.subtitle LIKE ? ESCAPE '\' OR t.description LIKE ? ESCAPE '\' OR tc.content LIKE ? ESCAPE '\')
+		ORDER BY t.sort, t.id LIMIT 200`, like, like, like, like)
+	if err != nil {
+		respondError(c, http.StatusInternalServerError, 500, "搜索待办失败")
+		return
+	}
+	defer rows.Close()
+	ids := make([]int64, 0, 16)
+	for rows.Next() {
+		var id int64
+		if rows.Scan(&id) == nil {
+			ids = append(ids, id)
+		}
+	}
+	respondOK(c, http.StatusOK, ids)
+}
+
 // Create POST /api/todos
 func (h *TodoHandler) Create(c *gin.Context) {
 	var p struct {
@@ -213,6 +255,7 @@ func (h *TodoHandler) Create(c *gin.Context) {
 		Priority    *int     `json:"priority"`
 		StartAt     *string  `json:"start_at"`
 		DueAt       *string  `json:"due_at"`
+		AllDay      *bool    `json:"all_day"`
 		WarnMinutes *int     `json:"warn_minutes"`
 		WarnOffsets []int    `json:"warn_offsets"`
 		RecType     string   `json:"rec_type"`
@@ -260,12 +303,16 @@ func (h *TodoHandler) Create(c *gin.Context) {
 	}
 
 	now := nowRFC()
+	allDay := false
+	if p.AllDay != nil {
+		allDay = *p.AllDay
+	}
 	res, err := h.db.Exec(
 		`INSERT INTO todos (category_id, parent_id, title, subtitle, description, priority, status,
-			start_at, due_at, warn_minutes, warn_offsets, rec_type, rec_interval, sort, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, ?, ?, ?, 0, ?, ?)`,
+			start_at, due_at, all_day, warn_minutes, warn_offsets, rec_type, rec_interval, sort, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)`,
 		p.CategoryID, p.ParentID, p.Title, strings.TrimSpace(p.Subtitle), p.Description,
-		priority, p.StartAt, p.DueAt, p.WarnMinutes, offsetsJSON(normalizeOffsets(p.WarnOffsets)),
+		priority, p.StartAt, p.DueAt, boolInt(allDay), p.WarnMinutes, offsetsJSON(normalizeOffsets(p.WarnOffsets)),
 		p.RecType, clampInterval(p.RecType, p.RecInterval), now, now)
 	if err != nil {
 		respondError(c, http.StatusInternalServerError, 500, "创建待办失败")
@@ -290,6 +337,7 @@ func (h *TodoHandler) Update(c *gin.Context) {
 		Priority    *int      `json:"priority"`
 		StartAt     **string  `json:"start_at"`
 		DueAt       **string  `json:"due_at"`
+		AllDay      *bool     `json:"all_day"`
 		WarnMinutes **int     `json:"warn_minutes"`
 		WarnOffsets *[]int    `json:"warn_offsets"`
 		RecType     *string   `json:"rec_type"`
@@ -349,6 +397,10 @@ func (h *TodoHandler) Update(c *gin.Context) {
 	if p.WarnMinutes != nil {
 		warnMinutes = *p.WarnMinutes
 	}
+	allDay := cur.AllDay
+	if p.AllDay != nil {
+		allDay = *p.AllDay
+	}
 	warnOffsets := cur.WarnOffsets
 	if p.WarnOffsets != nil {
 		warnOffsets = normalizeOffsets(*p.WarnOffsets)
@@ -367,9 +419,9 @@ func (h *TodoHandler) Update(c *gin.Context) {
 
 	if _, err := h.db.Exec(
 		`UPDATE todos SET category_id = ?, title = ?, subtitle = ?, description = ?, priority = ?,
-		 start_at = ?, due_at = ?, warn_minutes = ?, warn_offsets = ?, rec_type = ?, rec_interval = ?,
+		 start_at = ?, due_at = ?, all_day = ?, warn_minutes = ?, warn_offsets = ?, rec_type = ?, rec_interval = ?,
 		 updated_at = ? WHERE id = ?`,
-		categoryID, title, subtitle, description, priority, startAt, dueAt, warnMinutes,
+		categoryID, title, subtitle, description, priority, startAt, dueAt, boolInt(allDay), warnMinutes,
 		offsetsJSON(warnOffsets), recType, recInterval, nowRFC(), id); err != nil {
 		respondError(c, http.StatusInternalServerError, 500, "保存待办失败")
 		return
@@ -486,10 +538,10 @@ func (h *TodoHandler) generateNext(cur Todo) {
 	now := nowRFC()
 	res, err := h.db.Exec(
 		`INSERT INTO todos (category_id, parent_id, title, subtitle, description, priority, status,
-			start_at, due_at, warn_minutes, warn_offsets, rec_type, rec_interval, sort, created_at, updated_at)
-		 VALUES (?, NULL, ?, ?, ?, ?, 'open', ?, ?, ?, ?, ?, ?, 0, ?, ?)`,
+			start_at, due_at, all_day, warn_minutes, warn_offsets, rec_type, rec_interval, sort, created_at, updated_at)
+		 VALUES (?, NULL, ?, ?, ?, ?, 'open', ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)`,
 		cur.CategoryID, cur.Title, cur.Subtitle, cur.Description, cur.Priority,
-		nextStart, nextDue, cur.WarnMinutes, offsetsJSON(cur.WarnOffsets),
+		nextStart, nextDue, boolInt(cur.AllDay), cur.WarnMinutes, offsetsJSON(cur.WarnOffsets),
 		cur.RecType, cur.RecInterval, now, now)
 	if err != nil {
 		return

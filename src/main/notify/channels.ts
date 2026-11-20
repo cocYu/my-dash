@@ -25,6 +25,8 @@ export interface NotifyTodo {
   status: 'open' | 'done' | 'closed'
   start_at: string | null
   due_at: string | null
+  /** 全天事件：due_at 为当天零点，提醒按整天处理 */
+  all_day: boolean
   /** 多档提前提醒（分钟）；空数组时退化用 warn_minutes */
   warn_offsets: number[] | null
   warn_minutes: number | null
@@ -209,6 +211,8 @@ function priorityLabel(p: number): string {
   return `P${p}`
 }
 
+const DAY_MS = 86_400_000
+
 export function buildNotifyMessage(events: NotifyEvent[], now: number): NotifyMessage {
   const title = `AtoZ 待办提醒（${events.length} 条）`
   const lines: string[] = []
@@ -221,12 +225,19 @@ export function buildNotifyMessage(events: NotifyEvent[], now: number): NotifyMe
     plainLines.push(label)
     htmlParts.push(`<h3>${label}</h3><ul>`)
     for (const { todo, anchorMs } of group) {
-      const anchorText =
-        node === 'start'
-          ? `开始 ${formatDueTime(anchorMs)}`
-          : node === 'warn'
-            ? `截止 ${formatDueTime(anchorMs)}，剩 ${spanText(anchorMs - now)}`
-            : `截止 ${formatDueTime(anchorMs)}，已超时 ${spanText(now - anchorMs)}`
+      let anchorText: string
+      if (node === 'start') {
+        anchorText = `开始 ${formatDueTime(anchorMs)}`
+      } else if (todo.all_day && todo.due_at) {
+        // 全天事件：截止日未跨过 → 今天截止；跨过 → 按整天算超时天数
+        const dueMs = Date.parse(todo.due_at)
+        if (now < dueMs + DAY_MS) anchorText = `今天截止（全天）`
+        else anchorText = `截止 ${formatDueTime(dueMs)}，已超时 ${Math.max(1, Math.round((now - dueMs) / DAY_MS))} 天`
+      } else if (node === 'warn') {
+        anchorText = `截止 ${formatDueTime(anchorMs)}，剩 ${spanText(anchorMs - now)}`
+      } else {
+        anchorText = `截止 ${formatDueTime(anchorMs)}，已超时 ${spanText(now - anchorMs)}`
+      }
       const sub = todo.subtitle ? `（${todo.subtitle}）` : ''
       lines.push(`- ${todo.title}${sub}（${priorityLabel(todo.priority)}）— ${anchorText}`)
       plainLines.push(`· ${todo.title}${sub}（${priorityLabel(todo.priority)}）— ${anchorText}`)

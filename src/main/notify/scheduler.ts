@@ -59,6 +59,15 @@ function channelReady(id: NotifyChannelId, cfg: NotifyConfig): boolean {
 
 const ALL_CHANNELS: NotifyChannelId[] = ['system', 'wecom', 'feishu', 'dingtalk', 'email']
 
+const DAY_MS = 86_400_000
+/** 全天事件「今天截止」提醒的时刻：当天 9 点 */
+const ALL_DAY_REMIND_HOUR = 9
+
+function dayStartOf(ms: number): number {
+  const d = new Date(ms)
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime()
+}
+
 /** 计算当前处于提醒窗口且未满足跳过条件的事件（不含去重） */
 function collectEvents(todos: NotifyTodo[], cfg: NotifyConfig, now: number): NotifyEvent[] {
   const events: NotifyEvent[] = []
@@ -74,6 +83,21 @@ function collectEvents(todos: NotifyTodo[], cfg: NotifyConfig, now: number): Not
     if (!t.due_at) continue
     const dueMs = Date.parse(t.due_at)
     if (Number.isNaN(dueMs)) continue
+
+    // 全天事件：无提前量窗口；截止日 9 点发「今天截止」，跨过整天才算已超时
+    if (t.all_day) {
+      const dayEnd = dueMs + DAY_MS - 1
+      const todayStart = dayStartOf(now)
+      if (now >= dayEnd) {
+        events.push({ todo: t, node: 'due', key: `${t.id}:${dueMs}:overdue`, anchorMs: dueMs })
+      } else if (dueMs === todayStart && now >= todayStart + ALL_DAY_REMIND_HOUR * 3_600_000) {
+        if (cfg.notifyOnOverdue) {
+          events.push({ todo: t, node: 'due', key: `${t.id}:${dueMs}:due`, anchorMs: dueMs })
+        }
+      }
+      continue
+    }
+
     // 多档提前提醒：warn_offsets 优先，为空退化用 warn_minutes 单档（负值/null 不提醒）
     const offsets =
       t.warn_offsets && t.warn_offsets.length > 0

@@ -101,12 +101,32 @@
           <button v-for="t in openList" :key="t.id" class="todo-mini-row" @click="go('/todos')">
             <span class="mini-dot" :style="{ background: priorityMeta(t.priority).color }" />
             <span class="mini-title">{{ t.title }}</span>
-            <span v-if="t.due_at" class="mini-due" :data-state="dueState(t)">{{ formatDue(t.due_at) }}</span>
+            <span v-if="t.due_at" class="mini-due" :data-state="dueState(t)">{{ formatDue(t.due_at, t.all_day) }}</span>
           </button>
         </div>
         <EmptyState v-else compact title="没有待处理事项" hint="今天可以专注手头的事" :icon="CircleCheck">
           <el-button size="small" @click="newTodo">新建待办</el-button>
         </EmptyState>
+        <div class="todo-stats">
+          <div class="stat-cell">
+            <b>{{ doneThisWeek }}</b>
+            <span>本周完成</span>
+          </div>
+          <div class="stat-cell" :class="{ danger: overdueCount > 0 }">
+            <b>{{ overdueCount }}</b>
+            <span>已逾期</span>
+          </div>
+          <div class="trend" title="近 7 天每日完成数">
+            <span
+              v-for="(n, i) in trend"
+              :key="i"
+              class="trend-bar"
+              :style="{ height: `${Math.max(2, Math.round((n / trendMax) * 22))}px` }"
+              :class="{ empty: n === 0 }"
+            />
+          </div>
+          <span class="trend-caption">近 7 天完成趋势</span>
+        </div>
       </section>
       </div>
 
@@ -200,6 +220,16 @@ const enabledPlugins = ref(0)
 const totalPlugins = ref(0)
 const electronVersion = `v${appMeta.electronVersion.split('.').slice(0, 2).join('.')}`
 
+// ---- 待办统计（R10）----
+const doneThisWeek = ref(0)
+const overdueCount = ref(0)
+/** 近 7 天每日完成数（旧 → 今天） */
+const trend = ref<number[]>([])
+const trendMax = computed(() => Math.max(1, ...trend.value))
+
+const DAY = 86_400_000
+const day0 = (d: Date): number => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime()
+
 const summary = computed(() => {
   const parts: string[] = []
   if (noteCount.value != null) parts.push(`${noteCount.value} 篇笔记`)
@@ -271,9 +301,31 @@ async function refresh(): Promise<void> {
         return a.due_at < b.due_at ? -1 : 1
       })
       .slice(0, 5)
+
+    // 本周完成（自然周，周一起）与近 7 天完成趋势、逾期数
+    const nowD = new Date()
+    const today0 = day0(nowD)
+    const weekStart = today0 - ((nowD.getDay() + 6) % 7) * DAY
+    const counts = new Array<number>(7).fill(0)
+    let weekDone = 0
+    let overdue = 0
+    for (const t of todos) {
+      if (t.status === 'done' && t.completed_at) {
+        const diff = Math.round((today0 - day0(new Date(t.completed_at))) / DAY)
+        if (diff >= 0 && diff < 7) counts[6 - diff]++
+        if (Date.parse(t.completed_at) >= weekStart) weekDone++
+      }
+      if (t.status === 'open' && t.due_at && Date.parse(t.due_at) < Date.now()) overdue++
+    }
+    doneThisWeek.value = weekDone
+    overdueCount.value = overdue
+    trend.value = counts
   } catch {
     openTodos.value = 0
     openList.value = []
+    doneThisWeek.value = 0
+    overdueCount.value = 0
+    trend.value = []
   }
 
   try {
@@ -607,6 +659,63 @@ onActivated(() => {
 
 .mini-due[data-state='today'] {
   color: var(--warning);
+}
+
+/* 待办统计条 */
+.todo-stats {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  padding: 10px 14px;
+  border-top: 1px solid var(--line, var(--divider));
+}
+
+.stat-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.stat-cell b {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--ink-1);
+  line-height: 1.2;
+}
+
+.stat-cell span {
+  font-size: 11px;
+  color: var(--ink-3);
+}
+
+.stat-cell.danger b {
+  color: var(--danger, #e5484d);
+}
+
+.trend {
+  margin-left: auto;
+  display: flex;
+  align-items: flex-end;
+  gap: 3px;
+  height: 24px;
+}
+
+.trend-bar {
+  width: 7px;
+  border-radius: 2px 2px 0 0;
+  background: var(--accent);
+  opacity: 0.75;
+  min-height: 2px;
+}
+
+.trend-bar.empty {
+  background: var(--fill-subtle);
+  opacity: 1;
+}
+
+.trend-caption {
+  font-size: 11px;
+  color: var(--ink-3);
 }
 
 /* 插件小组件 */
