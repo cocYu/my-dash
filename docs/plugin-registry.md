@@ -1,10 +1,10 @@
 # 插件中心：用 GitHub / Gitee 分发插件
 
-插件的源码、打包与发行都放在独立仓库 **`AtoZPlugins`**（本机 `E:\project\electorn\AtoZPlugins`），
+插件的源码、打包与发行都放在独立仓库 **`my-dash-plugins`**（本机 `E:\project\electorn\AtoZPlugins`），
 主应用只负责读取索引与安装。这样插件可以独立发版，不必跟着应用走 release。
 
 ```
-AtoZPlugins  ──tag vX.Y.Z──►  GitHub Actions  ──►  GitHub Release（zip）
+my-dash-plugins  ──tag vX.Y.Z──►  GitHub Actions  ──►  GitHub Release（zip）
                                     │                     │
                                     ├─ 回写 registry.json ─┤
                                     └─ 镜像 ─► Gitee Release（zip + registry）
@@ -15,7 +15,7 @@ AtoZ 应用 ── 拉 registry.json（Gitee raw → jsDelivr → GitHub raw）�
 ## 一、插件中心仓库结构
 
 ```
-AtoZPlugins/
+my-dash-plugins/
 ├── plugins/                    # 一个子目录一个插件
 │   ├── hello-tool/{plugin.json,index.js}
 │   └── notes-stats/
@@ -65,7 +65,7 @@ git push origin v0.1.0      # Gitee
 git push github v0.1.0      # GitHub（流水线跑在这里）
 ```
 
-流水线（`AtoZPlugins/.github/workflows/release.yml`）：
+流水线（`my-dash-plugins/.github/workflows/release.yml`）：
 
 1. `npm ci` → 校验并打包 `plugins/`，生成 `registry.json`
 2. 创建/复用 GitHub Release，上传 `dist/*.zip`
@@ -73,7 +73,7 @@ git push github v0.1.0      # GitHub（流水线跑在这里）
 4. 配了 `GITEE_TOKEN` 时：推 `main` + tag 到 Gitee，并上传 zip 到 Gitee Release
 
 首次发布前需要在 GitHub 仓库加 `GITEE_TOKEN`（Gitee 私人令牌，勾 `projects`）；
-仓库路径不是 `yukai1998/AtoZPlugins` 时，用仓库变量 `GITEE_REPO` 覆盖。
+仓库路径不是 `yukai1998/my-dash-plugins` 时，用仓库变量 `GITEE_REPO` 覆盖。
 
 ## 四、索引格式
 
@@ -85,8 +85,8 @@ git push github v0.1.0      # GitHub（流水线跑在这里）
     "version": "0.1.0",
     "description": "…",
     "category": "示例",
-    "downloadUrl": "https://gitee.com/yukai1998/AtoZPlugins/releases/download/v0.1.0/hello-tool-0.1.0.zip",
-    "mirrors": ["https://github.com/cocYu/AtoZPlugins/releases/download/v0.1.0/hello-tool-0.1.0.zip"],
+    "downloadUrl": "https://gitee.com/yukai1998/my-dash-plugins/releases/download/v0.1.0/hello-tool-0.1.0.zip",
+    "mirrors": ["https://github.com/cocYu/my-dash-plugins/releases/download/v0.1.0/hello-tool-0.1.0.zip"],
     "sha256": "8dd364b8…",
     "size": 1294
   }
@@ -109,9 +109,9 @@ git push github v0.1.0      # GitHub（流水线跑在这里）
 默认索引：
 
 ```
-https://gitee.com/yukai1998/AtoZPlugins/raw/main/registry.json
-https://cdn.jsdelivr.net/gh/cocYu/AtoZPlugins@main/registry.json
-https://raw.githubusercontent.com/cocYu/AtoZPlugins/main/registry.json
+https://gitee.com/yukai1998/my-dash-plugins/raw/main/registry.json
+https://cdn.jsdelivr.net/gh/cocYu/my-dash-plugins@main/registry.json
+https://raw.githubusercontent.com/cocYu/my-dash-plugins/main/registry.json
 ```
 
 仓库改名或想自建索引时，改这三行即可；普通用户也可以在「获取工具」里填自定义地址。

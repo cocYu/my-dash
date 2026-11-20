@@ -108,7 +108,7 @@ export function activate(ctx) {
 - **安装（zip）**：把插件目录压成 zip（`plugin.json` 在压缩包根目录，或唯一的一级子目录里）→ 「导入插件 (.zip)」
 - **安装（URL）**：托管一个 zip 下载地址 → 「从 URL 安装…」，同 id 已安装时执行**覆盖升级**
 
-完整两段式示例见插件中心 `plugins/hello-tool`（工具箱工具 + KV）与 `plugins/notes-stats`（页面 + 仪表盘小组件 + HTTP 读数据），仓库地址 `https://gitee.com/yukai1998/AtoZPlugins`。
+完整两段式示例见插件中心 `plugins/hello-tool`（工具箱工具 + KV）与 `plugins/notes-stats`（页面 + 仪表盘小组件 + HTTP 读数据），仓库地址 `https://gitee.com/yukai1998/my-dash-plugins`。
 
 ## PluginContext API
 
@@ -253,7 +253,7 @@ events: {
 
 ### 发布到插件中心
 
-官方插件统一放在独立仓库 **AtoZPlugins**（`plugins/<id>/`），打包与索引由它的脚本自动完成：
+官方插件统一放在独立仓库 **my-dash-plugins**（`plugins/<id>/`），打包与索引由它的脚本自动完成：
 
 ```bash
 cd E:/project/electorn/AtoZPlugins
@@ -277,8 +277,8 @@ git tag -a v0.1.0 -m "插件中心 0.1.0" && git push origin v0.1.0 && git push 
     "version": "0.2.0",
     "description": "…",
     "category": "示例",
-    "downloadUrl": "https://gitee.com/yukai1998/AtoZPlugins/releases/download/v0.2.0/hello-tool-0.2.0.zip",
-    "mirrors": ["https://github.com/cocYu/AtoZPlugins/releases/download/v0.2.0/hello-tool-0.2.0.zip"],
+    "downloadUrl": "https://gitee.com/yukai1998/my-dash-plugins/releases/download/v0.2.0/hello-tool-0.2.0.zip",
+    "mirrors": ["https://github.com/cocYu/my-dash-plugins/releases/download/v0.2.0/hello-tool-0.2.0.zip"],
     "sha256": "<zip 的 sha256>",
     "size": 1294
   }
