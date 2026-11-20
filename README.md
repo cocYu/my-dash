@@ -88,10 +88,11 @@ npm run release:tag -- 0.2.0   # 打发行 tag 并推 Gitee + GitHub，触发三
 node scripts/e2e-check.mjs   # 先 MYDASH_DEBUG_PORT=9222 npm run dev 再执行
 ```
 
-## 发行构建（GitHub Actions → Gitee Release）
+## 发行构建（GitHub Actions → GitHub + Gitee Release）
 
 推送 `release/vX.Y.Z` tag 后，由 GitHub Actions 的三台构建机并行产出
-Windows / macOS / Linux 安装包，再汇总发布到 Gitee 仓库的「发行版」页面：
+Windows / macOS / Linux 安装包，同时发布到 GitHub 与 Gitee 的「发行版」页面，
+随后清理 Actions 产物：
 
 ```bash
 npm run release:tag -- 0.2.0

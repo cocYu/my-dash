@@ -1,7 +1,7 @@
-# 三端发行流水线（GitHub Actions → Gitee Release）
+# 三端发行流水线（GitHub Actions → GitHub + Gitee Release）
 
-推送 `release/vX.Y.Z` tag 后，自动构建 Windows / macOS / Linux 安装包，并发布到
-**Gitee 仓库的「发行版」页面**，附件可直接下载。
+推送 `release/vX.Y.Z` tag 后，自动构建 Windows / macOS / Linux 安装包，同时发布到
+**GitHub 与 Gitee 的「发行版」页面**，附件可直接下载；发布完成后清理 Actions 产物，不占存储额度。
 
 配置入口：
 
@@ -34,21 +34,33 @@ git push github main
 > 之后 Gitee 仍是主仓库，日常 `git push origin main` 不变；只有打 tag 时需要两边都推
 > （`npm run release:tag` 会自动处理）。
 
-### 2. Gitee 令牌
+### 2. Gitee 令牌（`GITEE_TOKEN`）
 
-Gitee → 设置 → 私人令牌 → 生成新令牌，勾选 **projects** 权限，复制令牌。
-到 GitHub 仓库 **Settings → Secrets and variables → Actions → New repository secret**：
+**获取**：
 
-| 名称 | 值 |
-| --- | --- |
-| `GITEE_TOKEN` | 上一步的令牌（必需） |
+1. 登录 Gitee，点右上角头像 → **设置**
+2. 左侧「安全设置」→ **私人令牌**（直达：<https://gitee.com/profile/personal_access_tokens>）
+3. 点「生成新令牌」，描述随便填（如 `github-actions-release`）
+4. 权限**只勾 `projects`**（创建 Release、上传附件需要它），其它可不勾
+5. 提交后页面会显示一次令牌，**立即复制**——关掉就再也看不到，只能重新生成
 
-可选的仓库变量（**Variables**，不是 Secrets；不填用脚本默认值）：
+**配置到 GitHub**：
+
+1. 打开 `https://github.com/cocYu/my-dash/settings/secrets/actions`
+2. **New repository secret**
+3. Name 填 `GITEE_TOKEN`，Secret 粘贴刚才的令牌，保存
+
+> 令牌相当于账号密码，不要写进 YAML、README 或提交到仓库。泄露后到 Gitee 私人令牌页删除重发即可。
+
+可选的仓库变量（**Settings → Secrets and variables → Actions → Variables**，不填用脚本默认值）：
 
 | 变量 | 默认值 | 说明 |
 | --- | --- | --- |
 | `GITEE_OWNER` | `yukai1998` | Gitee 仓库所属空间 |
 | `GITEE_REPO` | `my-dash` | Gitee 仓库路径 |
+
+> 不配置 `GITEE_TOKEN` 时，构建与 GitHub Release 仍会正常完成，但「发布到 Gitee」这一步会显式报错，
+> 且**不会**清理 Actions 产物（保留下来便于配好令牌后直接重跑发布）。
 
 ### 3. 确认 Actions 已启用
 
@@ -75,11 +87,29 @@ git push github release/v0.0.2     # 触发构建
 
 ```
 build-windows ┐
-build-macos   ├→ 三端并行构建，产物作为 artifact 上传
+build-macos   ├→ 三端并行构建，产物作为 Actions artifact（临时中转）
 build-linux   ┘
       ↓
-publish → 下载全部产物 → 创建/复用 Release → 分卷上传附件
+publish → 下载全部产物
+        → ① 创建/复用 GitHub Release，上传附件（GITHUB_TOKEN，无需配置）
+        → ② 创建/复用 Gitee Release，分卷上传附件（需要 GITEE_TOKEN）
+        → ③ 删除本次运行的 Actions 产物
 ```
+
+### 产物清理会不会影响 Release？
+
+**不会。** 两者是完全独立的存储：
+
+| | Actions 产物（artifact） | Release 附件（release asset） |
+| --- | --- | --- |
+| 存放位置 | 绑定某次 workflow run | 绑定某个 Release |
+| 用途 | 任务之间传递文件 | 对外发布、供人下载 |
+| 大小限制 | 受仓库存储额度（Free 500MB）限制 | 单文件 <2GB；公开仓库下载不计费 |
+| 保留期 | 默认 90 天，可设 `retention-days` | 随 Release 存在，除非手动删除 |
+
+发布任务先把文件上传到 Release，之后删除 Actions 产物，只是把「中转站」清空，Release 里的附件仍在。
+本项目里的清理步骤只在 ①② 都成功后执行；失败时产物保留（`retention-days: 1`），方便「Re-run failed jobs」
+直接重试发布，不用重新构建。
 
 单个 build 任务：
 
@@ -105,9 +135,10 @@ AtoZ-0.0.2-mac-x64.zip / -arm64.zip
 
 ### 重跑
 
-构建失败可以直接在 Actions 页面 **Re-run failed jobs**；想只重试发布，
-手动运行 `Release` workflow，输入已存在的 tag（如 `release/v0.0.2`）。
-已存在的同名附件会自动跳过。
+- **构建或发布失败**：Actions 页面 → 该次运行 → **Re-run failed jobs**。因为此时产物还没被清理，
+  发布任务会直接复用，不会重新构建（产物保留 1 天）。
+- **只重试发布**：手动运行 `Release` workflow，输入已存在的 tag（如 `release/v0.0.2`）。
+- 已存在的同名 Release 附件会自动覆盖 / 跳过，不会重复堆积。
 
 ## 附件大小限制
 

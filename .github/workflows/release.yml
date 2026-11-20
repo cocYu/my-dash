@@ -1,6 +1,6 @@
 name: Release
 
-# 推送 release/vX.Y.Z tag 触发：三端并行构建 → 汇总发布到 Gitee Release。
+# 推送 release/vX.Y.Z tag 触发：三端并行构建 → 发布到 GitHub Release + Gitee Release → 清理 Actions 产物。
 # 也可在 Actions 页面手动运行（填一个已存在的 tag），用于失败后重跑发布。
 on:
   push:
@@ -13,7 +13,10 @@ on:
         required: true
 
 permissions:
-  contents: read
+  # 创建 / 追加 GitHub Release 及其附件
+  contents: write
+  # 发布完成后删除本次运行的 Actions 产物（释放存储额度）
+  actions: write
 
 # 同一个 tag 只跑一条流水线，避免重复创建 Release / 并发上传同名附件
 concurrency:
@@ -55,16 +58,17 @@ jobs:
           go-version-file: backend/go.mod
           cache-dependency-path: backend/go.sum
 
-      # 脚本内部会执行 npm ci + npm version + go build + electron-builder
+      # 脚本内部会执行 npm ci + npm version + go build + electron-vite build + electron-builder
       - name: 构建 ${{ matrix.platform }}
         run: node scripts/ci/build-and-publish.mjs --platform ${{ matrix.platform }} --no-publish
 
-      - name: 上传产物
+      # 只是「构建机 → 发布任务」的中转，发布成功后会立即删除；失败时最多保留 1 天便于重试
+      - name: 上传产物（临时中转）
         uses: actions/upload-artifact@v4
         with:
           name: dist-${{ matrix.platform }}
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 1
           path: |
             dist/*.exe
             dist/*.dmg
@@ -73,7 +77,7 @@ jobs:
             dist/*.deb
 
   publish:
-    name: publish → Gitee Release
+    name: publish → GitHub + Gitee
     needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -90,14 +94,75 @@ jobs:
           path: dist-publish
           merge-multiple: true
 
+      # 先发 GitHub：不依赖任何外部令牌，用仓库自带的 GITHUB_TOKEN 即可
+      - name: 发布到 GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          VERSION="${RELEASE_TAG#release/}"
+          VERSION="${VERSION#v}"
+          echo "版本：${VERSION}，tag：${RELEASE_TAG}"
+
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            echo "Release 已存在，追加/覆盖附件"
+          else
+            gh release create "$RELEASE_TAG" \
+              --verify-tag \
+              --title "AtoZ ${VERSION}" \
+              --notes "AtoZ ${VERSION} 桌面版安装包（Windows / macOS / Linux）。
+
+          - Windows：\`AtoZ-${VERSION}-win-x64-setup.exe\`
+          - macOS：\`AtoZ-${VERSION}-mac-x64.dmg\` / \`AtoZ-${VERSION}-mac-arm64.dmg\`
+          - Linux：\`AtoZ-${VERSION}-linux-x86_64.AppImage\` / \`AtoZ-${VERSION}-linux-amd64.deb\`
+
+          未签名版本：Windows 首次运行可能提示 SmartScreen；macOS 首次打开需右键「打开」，或执行
+          \`xattr -dr com.apple.quarantine /Applications/AtoZ.app\`。
+
+          国内下载：https://gitee.com/${{ vars.GITEE_OWNER || 'yukai1998' }}/${{ vars.GITEE_REPO || 'my-dash' }}/releases/tag/${RELEASE_TAG}"
+          fi
+
+          gh release upload "$RELEASE_TAG" dist-publish/* --clobber
+          echo "GitHub Release: ${{ github.server_url }}/${{ github.repository }}/releases/tag/${RELEASE_TAG}"
+
       - name: 发布到 Gitee
         env:
           GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
           GITEE_OWNER: ${{ vars.GITEE_OWNER || 'yukai1998' }}
           GITEE_REPO: ${{ vars.GITEE_REPO || 'my-dash' }}
           MYDASH_CI_OUT: dist-publish
-        run: node scripts/ci/build-and-publish.mjs --platform all --publish-only
-
-      - name: 输出 Release 地址
         run: |
-          echo "Release: https://gitee.com/${{ vars.GITEE_OWNER || 'yukai1998' }}/${{ vars.GITEE_REPO || 'my-dash' }}/releases/tag/${RELEASE_TAG}"
+          if [ -z "${GITEE_TOKEN}" ]; then
+            echo "::error::未配置 GITEE_TOKEN，无法发布到 Gitee（见 docs/ci-release.md「配置 Gitee 令牌」）"
+            exit 1
+          fi
+          node scripts/ci/build-and-publish.mjs --platform all --publish-only
+
+      # Release 附件与 Actions 产物是两套独立存储：删除这里的产物不会影响已发布的 Release。
+      # 只在全部发布成功后清理；失败时保留产物，便于「Re-run failed jobs」直接重试发布。
+      - name: 清理 Actions 产物（释放存储额度）
+        if: success()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          ids=$(gh api "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/artifacts" \
+            --paginate --jq '.artifacts[].id')
+          if [ -z "$ids" ]; then
+            echo "没有需要清理的产物"
+            exit 0
+          fi
+          for id in $ids; do
+            gh api -X DELETE "repos/${{ github.repository }}/actions/artifacts/$id"
+            echo "已删除 artifact $id"
+          done
+
+      - name: 结果摘要
+        if: always()
+        run: |
+          {
+            echo "### 发行结果"
+            echo ""
+            echo "- GitHub：${{ github.server_url }}/${{ github.repository }}/releases/tag/${RELEASE_TAG}"
+            echo "- Gitee：https://gitee.com/${{ vars.GITEE_OWNER || 'yukai1998' }}/${{ vars.GITEE_REPO || 'my-dash' }}/releases/tag/${RELEASE_TAG}"
+          } >> "$GITHUB_STEP_SUMMARY"
