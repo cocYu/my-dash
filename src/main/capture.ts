@@ -183,6 +183,13 @@ export async function beginRegionCapture(pluginId: string, page = 'overlay.html'
   return { ok: true }
 }
 
+// The selection is local to the captured display; window bounds are global DIP.
+function coversLongshot(bar: Electron.Rectangle, display: Electron.Display): boolean {
+  if (!longshotRect) return true
+  const x = display.bounds.x + longshotRect.x, y = display.bounds.y + longshotRect.y
+  return bar.x < x + longshotRect.w && bar.x + bar.width > x && bar.y < y + longshotRect.h && bar.y + bar.height > y
+}
+
 /** 创建长截图浮动控制条窗（内容保护、置顶、不抢焦点，加载插件控制条页） */
 function showLongshotBar(pluginId: string, page: string): void {
   // 只销毁旧窗口实例，不清 longshotRect/longshotFirstFrame——
@@ -194,11 +201,12 @@ function showLongshotBar(pluginId: string, page: string): void {
   const width = 560
   const height = 84
   const wa = display.workArea
+  const center = wa.x + Math.round((wa.width - width) / 2)
+  const bottom = wa.y + Math.max(0, wa.height - height - 8)
+  const candidates = [bottom, wa.y + 8].flatMap(y => [center, wa.x, wa.x + wa.width - width].map(x => ({x,y,width,height})))
+  const bounds = candidates.find(b => !coversLongshot(b, display)) ?? candidates[0]
   const win = new BrowserWindow({
-    x: wa.x + Math.round((wa.width - width) / 2),
-    y: wa.y + wa.height - height - 40,
-    width,
-    height,
+    ...bounds,
     frame: false,
     transparent: true,
     resizable: false,
@@ -446,12 +454,13 @@ export function registerCaptureIpc(getter: () => BrowserWindow | null): void {
   ipcMain.handle('capture:longshot-frame', async (e): Promise<{ dataUrl: string; dpr: number } | null> => {
     if (!longshotBarWindow || longshotBarWindow.isDestroyed() || longshotBarWindow.webContents !== e.sender) return null
     const bar = longshotBarWindow
-    bar.hide()
+    const display = captureDisplay ?? screen.getPrimaryDisplay()
+    const mustHide = coversLongshot(bar.getBounds(), display)
     try {
-      await new Promise(r => setTimeout(r, 100))
+      if (mustHide) { bar.hide(); await new Promise(r => setTimeout(r, 100)) }
       if (bar !== longshotBarWindow) return null
       return { dataUrl: await snapshotSessionScreen(), dpr: (captureDisplay ?? screen.getPrimaryDisplay()).scaleFactor }
-    } finally { if (bar === longshotBarWindow && !bar.isDestroyed()) bar.showInactive() }
+    } finally { if (mustHide && bar === longshotBarWindow && !bar.isDestroyed()) bar.showInactive() }
   })
 
   // 自动翻页：向前置目标应用发翻页键（macOS；前置是本应用时拒绝，提示先点目标窗口）
